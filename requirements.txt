@@ -1,0 +1,11 @@
+# Python >=3.10；赛题建议 PyTorch >=2.5.1、Linux 训练环境
+numpy>=1.24
+xarray>=2023.1
+netCDF4>=1.6
+PyYAML>=6.0
+tqdm>=4.66
+matplotlib>=3.7
+torch>=2.5.1
+
+# 开发 / CI
+pytest>=7.0

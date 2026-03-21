@@ -1,0 +1,13 @@
+---
+description: OceanRace 统一使用 utils.logger 打日志
+alwaysApply: true
+---
+
+# 日志（必须遵守）
+
+- **新增或修改 Python 业务代码**时，使用项目统一日志，禁止用 `print()` 作为正式、可追踪的运行日志（临时调试可局部使用，合并前建议改为 `logger.debug`）。
+- 在模块顶部：`from utils.logger import get_logger`，然后 `logger = get_logger(__name__)`。
+- 可执行入口（`scripts/*.py`、`if __name__ == "__main__"`、训练入口）在最早调用一次 `from utils.logger import setup_logging` 与 `setup_logging()`；可选 `log_file=Path("outputs/logs/run.log")`。
+- 日志级别可通过环境变量 `OCEAN_LOG_LEVEL`（如 `DEBUG`、`INFO`）调整。
+- 需要 **tqdm 进度条** 且同时打日志时：从 `utils.logger` 导入 `tqdm` 与 `tqdm_logging`，在 `with tqdm_logging():` 包裹循环，避免日志与进度条互相打乱。
+- 实现细节见 `src/utils/logger.py` 与 `src/utils/README.md`。

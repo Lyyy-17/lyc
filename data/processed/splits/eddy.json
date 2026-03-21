@@ -1,0 +1,13 @@
+{
+  "task": "eddy",
+  "train": [
+    "data/processed/eddy_detection/20230101_20231231_clean.nc",
+    "data/processed/eddy_detection/20030101_20121231_clean.nc",
+    "data/processed/eddy_detection/20130101_20221231_clean.nc",
+    "data/processed/eddy_detection/20240101_20241231_clean.nc"
+  ],
+  "val": [
+    "data/processed/eddy_detection/19930101_20021231_clean.nc"
+  ],
+  "test": []
+}

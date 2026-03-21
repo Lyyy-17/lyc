@@ -1,0 +1,98 @@
+# 数据路径与清洗参数（相对项目根目录）
+# 末尾 artifacts / standardization 由 scripts/02_preprocess.py 在 --steps 含 stats 时自动回写
+project:
+  root: .
+paths:
+  raw:
+    eddy: data/raw/eddy_detection
+    element_forecasting: data/raw/element_forecasting
+    anomaly: data/raw/anomaly_detection
+  processed:
+    eddy: data/processed/eddy_detection
+    element_forecasting: data/processed/element_forecasting
+    anomaly: data/processed/anomaly_detection
+  splits: data/processed/splits
+  normalization: data/processed/normalization
+split:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  seed: 42
+stats:
+  max_files_per_task: 5
+  random_seed: 42
+batch:
+  max_files_eddy: null
+  max_files_element: null
+  max_files_anomaly_years: null
+fill:
+  eddy_float: -2147483647.0
+  element: -30000.0
+output:
+  compression: true
+  complevel: 4
+artifacts:
+  split_manifests:
+    eddy: data/processed/splits/eddy.json
+    element_forecasting: data/processed/splits/element_forecasting.json
+    anomaly_detection: data/processed/splits/anomaly_detection.json
+  normalization_files:
+    eddy: data/processed/normalization/eddy_norm.json
+    element_forecasting: data/processed/normalization/element_forecasting_norm.json
+    anomaly_detection: data/processed/normalization/anomaly_detection_norm.json
+  split_counts:
+    eddy:
+      train: 4
+      val: 1
+      test: 0
+    element_forecasting:
+      train: 5625
+      val: 1205
+      test: 1206
+    anomaly_detection:
+      train: 8
+      val: 2
+      test: 2
+standardization:
+  eddy:
+    adt:
+      mean: 0.8905614123579311
+      std: 0.4277416708718609
+    ugos:
+      mean: 0.048695528489097306
+      std: 0.22902905462155979
+    vgos:
+      mean: -0.001364699731380567
+      std: 0.21282598172237022
+  element_forecasting:
+    sst:
+      mean: 15.677957688556775
+      std: 7.761359927733071
+    sss:
+      mean: 31.84179851029747
+      std: 2.1166052650575757
+    ssu:
+      mean: 0.006302024230368306
+      std: 0.3748564867295923
+    ssv:
+      mean: -0.00731646276837105
+      std: 0.10284520860707669
+  anomaly_detection:
+    u10:
+      mean: -0.7383596581253553
+      std: 6.015596746439769
+    v10:
+      mean: -1.5438607806216396
+      std: 4.652880921703842
+    wind_speed:
+      mean: 6.602290440344493
+      std: 4.14429090830851
+    swh:
+      mean: 2.5559296308244495
+      std: 1.3050603858294383
+    mwp:
+      mean: 8.055595220726394
+      std: 1.7077181316809056
+    mwd:
+      mean: 134.13465714661976
+      std: 118.01846703853899

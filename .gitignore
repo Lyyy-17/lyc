@@ -22,9 +22,13 @@ venv/
 .ipynb_checkpoints/
 
 # Data
-data/raw/
+data/raw/*
+!data/raw/README.md
 data/interim/
-data/processed/
+# processed 下大文件仍忽略，但保留划分清单 JSON 可提交
+data/processed/*
+!data/processed/splits/
+!data/processed/splits/**
 outputs/
 
 # Models
