@@ -12,8 +12,7 @@
 在项目根目录：
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m baseline.element_forecasting.train --epochs 5 --batch-size 2
+python scripts/04_train_forecast.py --epochs 5 --batch-size 2
 ```
 
 使用 `utils.logger` 打日志；无 norm 文件时会 warning 并以原始数值训练。

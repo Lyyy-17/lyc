@@ -1,17 +1,18 @@
 """
 要素预报 ConvLSTM 基线训练入口。
 
-在项目根目录、``PYTHONPATH=src``::
-
-    python -m baseline.element_forecasting.train --epochs 2 --batch-size 1
+超参数从 configs/model_config.yaml 读取，训练参数从 configs/train_config.yaml 读取，
+命令行参数可覆盖配置。
 """
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
+import yaml
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
@@ -27,6 +28,17 @@ from utils.logger import get_logger, setup_logging, tqdm, tqdm_logging  # noqa: 
 _log = get_logger(__name__)
 
 
+def _load_config(path: Path, key_path: list[str]) -> dict[str, Any]:
+    """从 YAML 文件加载配置，返回指定键路径下的字典。"""
+    if not path.is_file():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    cfg: dict[str, Any] = yaml.safe_load(text) or {}
+    for k in key_path:
+        cfg = (cfg or {}).get(k, {})
+    return cfg if isinstance(cfg, dict) else {}
+
+
 def _collate(batch: list[dict]) -> dict:
     x = torch.stack([b["x"] for b in batch], dim=0)
     y = torch.stack([b["y"] for b in batch], dim=0)
@@ -34,15 +46,30 @@ def _collate(batch: list[dict]) -> dict:
 
 
 def main() -> None:
+    model_cfg_path = ROOT / "configs" / "model_config.yaml"
+    train_cfg_path = ROOT / "configs" / "train_config.yaml"
+    model_cfg = _load_config(model_cfg_path, ["baseline", "element_forecasting"])
+    train_cfg = _load_config(train_cfg_path, ["element_forecasting"])
+
+    def _model(key: str, default: Any) -> Any:
+        return model_cfg.get(key, default)
+
+    def _train(key: str, default: Any) -> Any:
+        return train_cfg.get(key, default)
+
     ap = argparse.ArgumentParser(description="要素预报 ConvLSTM 基线训练")
-    ap.add_argument("--epochs", type=int, default=5)
-    ap.add_argument("--batch-size", type=int, default=2)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--input-len", type=int, default=12)
-    ap.add_argument("--forecast-len", type=int, default=12)
-    ap.add_argument("--hidden", type=int, default=64)
-    ap.add_argument("--layers", type=int, default=2)
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--epochs", type=int, default=_train("epochs", 5))
+    ap.add_argument("--batch-size", type=int, default=_train("batch_size", 2))
+    ap.add_argument("--lr", type=float, default=_train("lr", 1e-3))
+    ap.add_argument("--input-len", type=int, default=_model("input_len", 12))
+    ap.add_argument("--forecast-len", type=int, default=_model("forecast_len", 12))
+    ap.add_argument("--hidden", type=int, default=_model("hidden", 64))
+    ap.add_argument("--layers", type=int, default=_model("layers", 2))
+    device_default = _train("device", "auto")
+    if device_default == "auto":
+        device_default = "cuda" if torch.cuda.is_available() else "cpu"
+    ap.add_argument("--device", default=device_default)
+    ap.add_argument("--num-workers", type=int, default=_train("num_workers", 4), help="DataLoader 多进程 worker 数")
     ap.add_argument(
         "--norm",
         type=Path,
@@ -84,14 +111,14 @@ def main() -> None:
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=_collate,
-        num_workers=0,
+        num_workers=args.num_workers,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
         collate_fn=_collate,
-        num_workers=0,
+        num_workers=args.num_workers,
     )
 
     in_ch = train_ds[0]["x"].shape[1]

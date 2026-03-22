@@ -152,7 +152,7 @@ src/eddy_detection/
 
 scripts/
 ├── 02a_generate_eddy_labels.py   # 生成伪标签（新增）
-└── 02_train_eddy.py              # 训练入口
+└── 03_train_eddy.py              # 训练入口
 ```
 
 ---

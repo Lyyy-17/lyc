@@ -11,13 +11,14 @@
 | `01_data_inspect.py` | 只读抽样统计 `data/raw` 下 NetCDF |
 | `02_preprocess.py` | raw → 清洗落盘；可选划分、splits、训练集 norm、回写配置 |
 | `smoke_element_forecast.py` | 合成极少样本 + 1 epoch，验证要素 ConvLSTM 基线链路（`outputs/smoke_element_baseline/`，见 `src/baseline/element_forecasting/README.md`） |
-| `02_train_eddy.py` | 涡旋识别训练入口（**占位**，待接入 `src/eddy_detection/`） |
-| `03_train_forecast.py` | 要素预报训练入口（**占位**；当前可用 `python -m baseline.element_forecasting.train`） |
-| `04_train_anomaly.py` | 异常检测训练入口（**占位**） |
-| `05_run_pipeline.py` | 端到端流水线（**占位**） |
-| `06_generate_report.py` | 评估报告生成（**占位**） |
+| `03_train_eddy.py` | 涡旋识别训练入口（**占位**，待接入 `src/eddy_detection/`） |
+| `04_train_forecast.py` | 要素预报训练入口（支持命令行覆盖参数） |
+| `run_element_baseline_train.py` | 要素预报（element）基线模型训练，**直接从 configs 读取**（`train_config.yaml`、`model_config.yaml`），无参数即开跑 |
+| `05_train_anomaly.py` | 异常检测训练入口（**占位**） |
+| `06_run_pipeline.py` | 端到端流水线（**占位**） |
+| `07_generate_report.py` | 评估报告生成（**占位**） |
 
-除 `01`/`02` 外，其余文件多为预留入口；训练也可直接使用 `src/` 各模块或 **`src/baseline/`**（见下文「基线实验」）。
+除 `01`/`02` 外，`04_train_forecast.py` 已实现；其余多为预留入口。
 
 ---
 
@@ -123,15 +124,14 @@ python scripts/02_preprocess.py --task all --steps all --validate --validate-lim
 三任务基线代码在 **`src/baseline/<任务>/`**，与 `scripts/` 并列，需 **`PYTHONPATH=src`** 后以 **模块方式**运行（同样使用 `utils.logger` / `utils.dataset_utils` 等）。
 
 | 入口 | 说明 |
-|------|------|
-| `python -m baseline.element_forecasting.train` | 要素预报 **ConvLSTM** 基线训练（需已完成划分与 norm，且单日时间维足够长） |
+| `python scripts/04_train_forecast.py` | 要素预报 **ConvLSTM** 基线训练（推荐，无需 PYTHONPATH） |
+| `python -m baseline.element_forecasting.train` | 同上，模块方式（需 `PYTHONPATH=src`） |
 | `src/baseline/eddy_detection/`、`anomaly_detection/` | 占位，见各目录 `README.md` |
 
-示例（项目根目录、PowerShell）：
+示例（项目根目录）：
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m baseline.element_forecasting.train --epochs 5 --batch-size 2 --help
+python scripts/04_train_forecast.py --epochs 5 --batch-size 2 --help
 ```
 
 详见 **`src/baseline/element_forecasting/README.md`**。
@@ -142,4 +142,4 @@ python -m baseline.element_forecasting.train --epochs 5 --batch-size 2 --help
 
 1. `01_data_inspect.py`：了解 raw 数据质量（可选 `--out` 保存 JSON）。
 2. `02_preprocess.py --task all --steps all`：清洗 → 划分 → 标准化参数 → 更新配置。
-3. **训练**：各任务用 `src/<任务>/dataset.py` 或基线 `src/baseline/<任务>/` 读取 `data/processed`，按 split / `normalization/*_norm.json` 加载；要素预报 ConvLSTM 基线见上节。
+3. **训练**：要素预报 `python scripts/04_train_forecast.py`；其它任务用 `src/<任务>/dataset.py` 或 `src/baseline/<任务>/`。

@@ -7,6 +7,7 @@ __pycache__/
 
 # Virtual env
 venv/
+.venv/
 .env/
 .env.*
 .Python
@@ -29,10 +30,11 @@ data/interim/
 data/processed/*
 !data/processed/splits/
 !data/processed/splits/**
-outputs/
 
-# Models
-*.pth
+# 中间训练结果（checkpoint、日志等）；最佳模型请挑选后放入 models/
+outputs/*
+# 最终最佳输出结果（指标、图表等）不忽略，可提交
+!outputs/final_results/
 
 # Logs
 *.log

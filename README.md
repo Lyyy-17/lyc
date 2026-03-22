@@ -39,18 +39,22 @@ OceanRace/
 │   │   └── anomaly_detection/
 │   ├── utils/                 # 公共工具（logger、visualization_defaults、dataset_utils、README）
 │   └── pipeline.py            # 主流程管道（占位）
-├── models/                    # 权重（如 eddy / forecast / anomaly）
-├── outputs/                   # 运行产物（图、报告等，按实现约定）
+├── models/                    # 最佳模型（从 outputs 挑选后放入，可提交）
+├── outputs/                   # 中间训练结果（checkpoint、日志等，gitignore）
+│   └── final_results/         # 最终最佳输出结果（指标、图表等，可提交）
+│       ├── eddy_detection/    # 涡旋识别
+│       ├── element_forecasting/   # 要素预报
+│       └── anomaly_detection/     # 异常检测
 ├── scripts/                   # 命令行入口（见 scripts/README.md）
 │   ├── README.md
 │   ├── 01_data_inspect.py     # 数据探查
 │   ├── 02_preprocess.py       # 预处理
-│   └── smoke_element_forecast.py  # 要素基线极少样本冒烟
-│   ├── 02_train_eddy.py       # 涡旋训练（占位，待接 src/eddy_detection）
-│   ├── 03_train_forecast.py   # 要素预报训练（占位；基线见 src/baseline/element_forecasting）
-│   ├── 04_train_anomaly.py    # 异常检测训练（占位）
-│   ├── 05_run_pipeline.py     # 端到端流水线（占位）
-│   └── 06_generate_report.py  # 评估报告（占位）
+│   ├── smoke_element_forecast.py  # 要素基线极少样本冒烟
+│   ├── 03_train_eddy.py       # 涡旋训练（占位，待接 src/eddy_detection）
+│   ├── 04_train_forecast.py   # 要素预报训练
+│   ├── 05_train_anomaly.py    # 异常检测训练（占位）
+│   ├── 06_run_pipeline.py     # 端到端流水线（占位）
+│   └── 07_generate_report.py  # 评估报告（占位）
 ├── tests/                     # 单元测试（preprocessing、models、pipeline）
 └── docs/
     └── 赛题A09_面向海洋环境智能分析系统.md
@@ -64,13 +68,21 @@ OceanRace/
 | `scripts/01_data_inspect.py` | 只读：抽样 `data/raw`，缺测率与最值（可 `--out JSON`） |
 | `scripts/02_preprocess.py` | 清洗 → `data/processed/`，可选划分与训练集标准化（`--steps`） |
 | `scripts/smoke_element_forecast.py` | 极少样本合成数据，跑 1 epoch 验证要素基线训练链路 |
-| `scripts/02_train_eddy.py` 等 | 训练/流水线/报告占位脚本（`03`–`06`），实现中；要素基线可先 `python -m baseline.element_forecasting.train` |
+| `scripts/03_train_eddy.py` 等 | 训练/流水线/报告脚本（`03`–`07`）；要素预报用 `python scripts/04_train_forecast.py` |
 | `src/baseline/` | 基线实验代码（`PYTHONPATH=src`，如 `python -m baseline.element_forecasting.train`） |
 | `src/baseline/element_forecasting/README.md` | 要素 ConvLSTM 基线模块与运行方式 |
 | `src/utils/README.md` | 工具说明（logger、dataset_utils、可视化命令行） |
 | `data/raw/README.md` | 各任务 NetCDF 维度与坐标说明 |
 | `src/anomaly_detection/README.md` | 异常检测方法选型与说明 |
 | `docs/赛题A09_面向海洋环境智能分析系统.md` | 赛题 A09 原文整理（指标与提交材料） |
+
+### 产出目录
+
+| 目录 | 说明 |
+|------|------|
+| `outputs/` | 存放**中间训练结果**（checkpoint、日志等），已 gitignore，不提交 |
+| `outputs/final_results/` | 存放**最终最佳输出结果**（指标、图表等），可提交。下设三模块子目录：`eddy_detection/`、`element_forecasting/`、`anomaly_detection/` |
+| `models/` | 存放**最佳模型**。训练完成后从 `outputs/` 挑选最优 checkpoint，复制到 `models/` 后可提交 |
 
 ---
 
