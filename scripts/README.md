@@ -13,7 +13,7 @@
 | `smoke_element_forecast.py` | 合成极少样本 + 1 epoch，验证要素 ConvLSTM 基线链路（`outputs/smoke_element_baseline/`，见 `src/baseline/element_forecasting/README.md`） |
 | `03_train_eddy.py` | 涡旋识别训练入口（**占位**，待接入 `src/eddy_detection/`） |
 | `04_train_forecast.py` | 要素预报训练入口（支持命令行覆盖参数） |
-| `run_element_baseline_train.py` | 要素预报（element）基线模型训练，**直接从 configs 读取**（`train_config.yaml`、`model_config.yaml`），无参数即开跑 |
+| `run_element_baseline_train.py` | 要素预报基线训练，读取 `configs/baseline/element_forecasting/{model,train}.yaml` |
 | `05_train_anomaly.py` | 异常检测训练入口（**占位**） |
 | `06_run_pipeline.py` | 端到端流水线（**占位**） |
 | `07_generate_report.py` | 评估报告生成（**占位**） |

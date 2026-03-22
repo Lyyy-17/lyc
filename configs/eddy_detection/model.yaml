@@ -1,0 +1,2 @@
+# 涡旋识别主模型超参数（待接入 src/eddy_detection）
+# 示例：backbone、输入通道、输出类别等

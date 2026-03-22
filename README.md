@@ -13,8 +13,11 @@ OceanRace/
 ├── requirements.txt
 ├── configs/
 │   ├── data_config.yaml       # 数据路径、划分、批处理、artifacts 等
-│   ├── model_config.yaml      # 各模型超参数
-│   └── train_config.yaml      # 训练参数
+│   ├── README.md              # 各子目录配置说明
+│   ├── eddy_detection/        # 涡旋主模型 model.yaml / train.yaml
+│   ├── element_forecasting/   # 要素预报主模型（非基线）
+│   ├── anomaly_detection/     # 异常检测主模型
+│   └── baseline/element_forecasting/  # 要素基线（ConvLSTM）与主模型分离
 ├── data/                      # 通常不提交（.gitignore）
 │   ├── __init__.py
 │   ├── raw/                   # 原始 NetCDF，见 data/raw/README.md

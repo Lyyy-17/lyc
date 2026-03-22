@@ -1,5 +1,5 @@
 """
-要素预报（element）基线模型训练启动脚本。参数从 configs/train_config.yaml、model_config.yaml 读取，无需命令行传参。
+要素预报（element）基线模型训练启动脚本。参数从 configs/baseline/element_forecasting/train.yaml、model.yaml 读取，无需命令行传参。
 
 项目根目录执行::
 

@@ -2,6 +2,10 @@
 
 基于 **ConvLSTM** 编码历史时空帧，1×1 卷积解码为未来 `forecast_len` 帧（多变量通道与输入一致）。
 
+## 配置
+
+基线与主任务 `src/element_forecasting` 的配置分离，见 `configs/baseline/element_forecasting/model.yaml` 与 `train.yaml`。也可用 `--model-config` / `--train-config` 指定路径。
+
 ## 依赖
 
 - 已运行 `scripts/02_preprocess.py`，且含 **split + stats**（`data/processed/splits/element_forecasting.json` 与 `normalization/element_forecasting_norm.json`）。

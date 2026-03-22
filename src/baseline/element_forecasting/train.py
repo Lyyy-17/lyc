@@ -1,7 +1,8 @@
 """
 要素预报 ConvLSTM 基线训练入口。
 
-超参数从 configs/model_config.yaml 读取，训练参数从 configs/train_config.yaml 读取，
+超参数从 configs/baseline/element_forecasting/model.yaml 读取，
+训练参数从 configs/baseline/element_forecasting/train.yaml 读取，
 命令行参数可覆盖配置。
 """
 from __future__ import annotations
@@ -28,14 +29,12 @@ from utils.logger import get_logger, setup_logging, tqdm, tqdm_logging  # noqa: 
 _log = get_logger(__name__)
 
 
-def _load_config(path: Path, key_path: list[str]) -> dict[str, Any]:
-    """从 YAML 文件加载配置，返回指定键路径下的字典。"""
+def _load_yaml(path: Path) -> dict[str, Any]:
+    """从 YAML 文件加载为扁平字典。"""
     if not path.is_file():
         return {}
     text = path.read_text(encoding="utf-8")
-    cfg: dict[str, Any] = yaml.safe_load(text) or {}
-    for k in key_path:
-        cfg = (cfg or {}).get(k, {})
+    cfg = yaml.safe_load(text) or {}
     return cfg if isinstance(cfg, dict) else {}
 
 
@@ -46,10 +45,25 @@ def _collate(batch: list[dict]) -> dict:
 
 
 def main() -> None:
-    model_cfg_path = ROOT / "configs" / "model_config.yaml"
-    train_cfg_path = ROOT / "configs" / "train_config.yaml"
-    model_cfg = _load_config(model_cfg_path, ["baseline", "element_forecasting"])
-    train_cfg = _load_config(train_cfg_path, ["element_forecasting"])
+    default_model_cfg = ROOT / "configs" / "baseline" / "element_forecasting" / "model.yaml"
+    default_train_cfg = ROOT / "configs" / "baseline" / "element_forecasting" / "train.yaml"
+
+    ap0 = argparse.ArgumentParser(add_help=False)
+    ap0.add_argument(
+        "--model-config",
+        type=Path,
+        default=default_model_cfg,
+        help="模型超参数 YAML（默认 configs/baseline/element_forecasting/model.yaml）",
+    )
+    ap0.add_argument(
+        "--train-config",
+        type=Path,
+        default=default_train_cfg,
+        help="训练参数 YAML（默认 configs/baseline/element_forecasting/train.yaml）",
+    )
+    pre, rest = ap0.parse_known_args(sys.argv[1:])
+    model_cfg = _load_yaml(pre.model_config)
+    train_cfg = _load_yaml(pre.train_config)
 
     def _model(key: str, default: Any) -> Any:
         return model_cfg.get(key, default)
@@ -57,7 +71,7 @@ def main() -> None:
     def _train(key: str, default: Any) -> Any:
         return train_cfg.get(key, default)
 
-    ap = argparse.ArgumentParser(description="要素预报 ConvLSTM 基线训练")
+    ap = argparse.ArgumentParser(description="要素预报 ConvLSTM 基线训练", parents=[ap0])
     ap.add_argument("--epochs", type=int, default=_train("epochs", 5))
     ap.add_argument("--batch-size", type=int, default=_train("batch_size", 2))
     ap.add_argument("--lr", type=float, default=_train("lr", 1e-3))
@@ -82,7 +96,7 @@ def main() -> None:
         default=None,
         help="覆盖默认 data/processed/splits/element_forecasting.json（极少样本冒烟测试等）",
     )
-    args = ap.parse_args()
+    args = ap.parse_args(rest)
     setup_logging()
 
     norm_path = args.norm if args.norm.is_file() else None

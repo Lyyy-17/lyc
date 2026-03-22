@@ -119,4 +119,4 @@
 | `detector.py` | 在线检测、台风关联、预警等级 |
 | `evaluator.py` | 准确率、AUC、误报率等 |
 
-具体超参数建议放在 `configs/model_config.yaml`（或本模块专用配置）中维护。
+具体超参数建议放在 `configs/anomaly_detection/model.yaml`（与 `train.yaml`）中维护。
