@@ -1,0 +1,16 @@
+---
+description: OceanRace AI 编程约定（logger、可视化、outputs、configs）；完整见 AGENTS.md
+alwaysApply: true
+---
+
+# OceanRace 协作（与 AGENTS.md 一致）
+
+在编写或修改本仓库代码时遵守：
+
+1. **日志**：使用 `utils.logger`（`get_logger`、`setup_logging`），不用 `print` 作正式日志。入口见 `src/utils/README.md`。
+2. **画图**：使用 `utils.visualization_defaults`（`apply_matplotlib_defaults`、`standard_savefig_kwargs` 等）。
+3. **结构**：优先在现有 `src/<任务>/`、`scripts/`、`baseline/` 上扩展。
+4. **产出**：checkpoint、中间图、训练过程文件写入 `outputs/<任务>/` 或 `outputs/baseline/...`；日志可用 `outputs/logs/`；定稿指标/图放 `outputs/final_results/<任务>/`。
+5. **配置**：数据相关 `configs/data_config.yaml`；模型 `configs/<任务>/model.yaml`；训练 `configs/<任务>/train.yaml`；要素基线 `configs/baseline/element_forecasting/*.yaml`。
+
+完整说明、可复制 Prompt 与目录表：**`AGENTS.md`**（建议在对话中 @AGENTS.md）。

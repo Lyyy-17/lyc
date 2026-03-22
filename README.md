@@ -9,7 +9,7 @@
 ```
 OceanRace/
 ├── README.md
-├── AGENTS.md                  # AI/协作约定（含日志等）
+├── AGENTS.md                  # AI/协作约定与可 @ 引用的编程 Prompt（logger、可视化、outputs、configs）
 ├── requirements.txt
 ├── configs/
 │   ├── data_config.yaml       # 数据路径、划分、批处理、artifacts 等
@@ -67,6 +67,7 @@ OceanRace/
 
 | 路径 | 说明 |
 |------|------|
+| `AGENTS.md` | **AI 编程 Prompt**（@ 引用）：logger、`visualization_defaults`、`outputs` 分层、`configs` 单一来源 |
 | `scripts/README.md` | 脚本说明、日志约定、基线实验衔接、典型流程 |
 | `scripts/01_data_inspect.py` | 只读：抽样 `data/raw`，缺测率与最值（可 `--out JSON`） |
 | `scripts/02_preprocess.py` | 清洗 → `data/processed/`，可选划分与训练集标准化（`--steps`） |

@@ -190,13 +190,16 @@ from utils import project_root, load_paths_from_manifest, load_norm_stats, stand
 
 | 类别 | 名称 | 说明 |
 |------|------|------|
-| 图幅 / 导出 | `DEFAULT_FIGSIZE` | `(9.0, 6.0)` 英寸 |
-| | `DEFAULT_DPI` | 保存 PNG 用 `150` |
+| 图幅 / 导出 | `DEFAULT_FIGSIZE` | 默认 `(10.0, 6.0)` 英寸 |
+| | `DEFAULT_DPI_DISPLAY` | 屏幕/内联显示 DPI，默认 `150` |
+| | `DEFAULT_DPI_SAVE` | 保存 PNG 推荐 DPI，默认 `300` |
+| | `DEFAULT_DPI` | 与 `DEFAULT_DPI_SAVE` 相同（兼容旧名） |
 | 色图 | `DEFAULT_CMAP` / `DEFAULT_CMAP_SEQUENTIAL` | 顺序量默认 `viridis` |
 | | `DEFAULT_CMAP_DIVERGING` | 有正有负或差分场默认 `RdBu_r` |
+| | `DEFAULT_COLOR_CYCLE` | 多曲线分类色列表 |
 | 字号 | `DEFAULT_FONT_SIZE`、`TITLE_FONT_SIZE`、`AXIS_LABEL_FONT_SIZE`、`TICK_FONT_SIZE`、`LEGEND_FONT_SIZE` | 与 `apply_matplotlib_defaults` 写入的 rc 一致 |
 | 线 / 点 | `DEFAULT_LINEWIDTH`、`DEFAULT_MARKERSIZE` | 默认线宽与散点标记大小 |
-| 外观 | `DEFAULT_GRID_ALPHA`、`DEFAULT_AXES_FACECOLOR`、`DEFAULT_FIGURE_FACECOLOR` | 网格透明度与轴/图背景 |
+| 外观 | `DEFAULT_GRID_COLOR`、`DEFAULT_AXES_FACECOLOR`、`DEFAULT_FIGURE_FACECOLOR` | 网格色与轴/图背景 |
 
 ### 函数
 

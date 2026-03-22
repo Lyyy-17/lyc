@@ -1,8 +1,10 @@
 # 配置说明
 
+**原则**：数据路径与预处理参数来自 **`data_config.yaml`**；各任务的**模型超参数**与**训练参数**分别从对应目录的 **`model.yaml`**、**`train.yaml`** 读取（代码中加载，避免硬编码）。AI 协作约定见根目录 **`AGENTS.md`**。
+
 | 路径 | 说明 |
 |------|------|
-| `data_config.yaml` | 数据路径、划分、预处理 artifacts（见仓库根 README） |
+| `data_config.yaml` | 数据路径、划分、预处理 artifacts、与 `scripts/02_preprocess.py` 一致 |
 | `eddy_detection/` | **涡旋识别主模型** `model.yaml` / `train.yaml` |
 | `element_forecasting/` | **要素预报主模型**（非基线） |
 | `anomaly_detection/` | **异常检测主模型** |

@@ -40,6 +40,32 @@ _DATE_FMT = "%Y-%m-%d %H:%M:%S"
 _configured: bool = False
 
 
+class _ConsoleColorFormatter(logging.Formatter):
+    """内部类：控制台彩色日志格式化器，利用 ANSI 转义码提升终端可读性"""
+    DIM = "\033[2m"
+    RESET = "\033[0m"
+    
+    COLORS = {
+        logging.DEBUG: "\033[36m",       # 青色
+        logging.INFO: "\033[32m",        # 绿色
+        logging.WARNING: "\033[33m",     # 黄色
+        logging.ERROR: "\033[31m",       # 红色
+        logging.CRITICAL: "\033[1;31m",  # 粗体红色
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = self.COLORS.get(record.levelno, self.RESET)
+        
+        # 视觉层级优化：弱化时间与模块名，高亮级别，保持消息主体为默认颜色
+        fmt = (
+            f"{self.DIM}%(asctime)s{self.RESET} | "
+            f"{color}%(levelname)-8s{self.RESET} | "
+            f"{self.DIM}%(name)s{self.RESET} | %(message)s"
+        )
+        formatter = logging.Formatter(fmt, datefmt=_DATE_FMT)
+        return formatter.format(record)
+
+
 def tqdm_logging() -> AbstractContextManager[Any]:
     """
     与 ``tqdm`` 同时使用时包一层，使 ``logging`` 输出重定向，不破坏进度条。
@@ -69,7 +95,7 @@ def setup_logging(
     配置根 logger：控制台（stderr）+ 可选文件。
 
     - 默认只配置一次；``force=True`` 时清空已有 handler 再配（测试或二次指定文件时可用）。
-    - 建议在 ``if __name__ == \"__main__\"`` 内、其它业务逻辑之前调用。
+    - 建议在 ``if __name__ == "__main__"`` 内、其它业务逻辑之前调用。
     """
     global _configured
 
@@ -85,19 +111,19 @@ def setup_logging(
     lvl = _parse_level(level)
     root.setLevel(lvl)
 
-    fmt = logging.Formatter(_DEFAULT_FORMAT, datefmt=_DATE_FMT)
-
+    # 1. 配置控制台 Handler (彩色, 弱化非核心信息)
     sh = logging.StreamHandler(sys.stderr)
     sh.setLevel(lvl)
-    sh.setFormatter(fmt)
+    sh.setFormatter(_ConsoleColorFormatter())
     root.addHandler(sh)
 
+    # 2. 配置可选的文件 Handler (纯文本，防止 ANSI 乱码)
     if log_file is not None:
         p = Path(log_file)
         p.parent.mkdir(parents=True, exist_ok=True)
         fh = logging.FileHandler(p, encoding="utf-8")
         fh.setLevel(lvl)
-        fh.setFormatter(fmt)
+        fh.setFormatter(logging.Formatter(_DEFAULT_FORMAT, datefmt=_DATE_FMT))
         root.addHandler(fh)
 
     _configured = True

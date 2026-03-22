@@ -8,6 +8,8 @@ __pycache__/
 # Virtual env
 venv/
 .venv/
+# 本地虚拟环境启动脚本（从 activate_oceanrace_env.sh.example 复制）
+activate_oceanrace_env.sh
 .env/
 .env.*
 .Python
