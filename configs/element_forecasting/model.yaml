@@ -1,2 +1,28 @@
-# 水文要素预报主模型超参数（非基线，见 configs/baseline/element_forecasting/）
-# 示例：序列长度、网络结构、通道数等
+# 水文要素预报主模型超参数（Hybrid: Transformer + Block Attn-Res + ARIMA + Attention Fusion）
+
+# 输入变量=输出变量；可改为其他任务变量，例如 [adt, ugos, vgos] 或 [u10, v10, swh, mwp, mwd]
+var_names:
+  - sst
+  - sss
+  - ssu
+  - ssv
+
+# 以时间步为单位，而非文件个数
+input_steps: 12
+output_steps: 12
+
+# Transformer with Block Attn-Res
+d_model: 64
+nhead: 4
+num_layers: 4
+block_size: 4
+dropout: 0.1
+spatial_downsample: 4
+
+# ARIMA branch
+enable_arima: true
+arima_max_p: 2
+arima_max_d: 1
+arima_max_q: 2
+# 固定阶可设置为 [p, d, q]；null 代表自动选阶（AIC）
+arima_order: null

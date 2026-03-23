@@ -1,2 +1,33 @@
 # 水文要素预报主模型训练参数（非基线）
-# 示例：epochs、batch_size、lr、device、num_workers
+
+# 变量列表可覆盖 model.yaml；输入变量=输出变量
+var_names:
+  - sst
+  - sss
+  - ssu
+  - ssv
+
+# 数据来源：processed 数据
+processed_dir: data/processed/element_forecasting
+manifest_path: data/processed/splits/element_forecasting.json
+norm_stats_path: data/processed/normalization/element_forecasting_norm.json
+
+# 滑窗采样
+window_stride: 1
+stitch_across_files: true
+
+# 训练超参数
+epochs: 10
+batch_size: 1
+lr: 0.0001
+num_workers: 0
+device: auto
+amp: true
+grad_accum_steps: 2
+
+# 损失配置
+loss_main_weight: 1.0
+loss_aux_transformer_weight: 0.2
+
+# 输出目录（中间产物）
+output_dir: outputs/element_forecasting
