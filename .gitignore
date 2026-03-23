@@ -32,6 +32,8 @@ data/interim/
 data/processed/*
 !data/processed/splits/
 !data/processed/splits/**
+!data/processed/normalization/
+!data/processed/normalization/**
 
 # 中间训练结果（checkpoint、日志等）；最佳模型请挑选后放入 models/
 outputs/*
