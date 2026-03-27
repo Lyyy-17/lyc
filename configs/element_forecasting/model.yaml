@@ -1,4 +1,4 @@
-# 水文要素预报主模型超参数（Hybrid: Transformer + Block Attn-Res + ARIMA + Attention Fusion）
+# 水文要素预报主模型超参数（Transformer + Block Attn-Res）
 
 # 输入变量=输出变量；可改为其他任务变量，例如 [adt, ugos, vgos] 或 [u10, v10, swh, mwp, mwd]
 var_names:
@@ -18,11 +18,3 @@ num_layers: 4
 block_size: 4
 dropout: 0.1
 spatial_downsample: 4
-
-# ARIMA branch
-enable_arima: true
-arima_max_p: 2
-arima_max_d: 1
-arima_max_q: 2
-# 固定阶可设置为 [p, d, q]；null 代表自动选阶（AIC）
-arima_order: null

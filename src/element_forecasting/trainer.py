@@ -9,10 +9,10 @@ from typing import Any
 import torch
 import torch.nn as nn
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from element_forecasting.dataset import ElementForecastWindowDataset
-from element_forecasting.evaluator import compute_regression_metrics
+from element_forecasting.evaluator import compute_regression_metrics_masked, masked_mse
 from element_forecasting.model import HybridElementForecastModel
 from utils.logger import get_logger, setup_logging, tqdm, tqdm_logging
 
@@ -68,9 +68,11 @@ def resolve_core_config(
 def _collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
 	x = torch.stack([b["x"] for b in batch], dim=0)
 	y = torch.stack([b["y"] for b in batch], dim=0)
+	y_valid = torch.stack([b["y_valid"] for b in batch], dim=0)
 	return {
 		"x": x,
 		"y": y,
+		"y_valid": y_valid,
 		"paths": [b["path"] for b in batch],
 	}
 
@@ -95,6 +97,17 @@ def run_training(args: argparse.Namespace) -> None:
 	output_steps = core["output_steps"]
 	window_stride = core["window_stride"]
 	stitch_across_files = core["stitch_across_files"]
+	open_file_lru_size = int(
+		args.open_file_lru_size
+		if args.open_file_lru_size is not None
+		else train_cfg.get("open_file_lru_size", 16)
+	)
+	single_file_train_ratio = float(
+		train_cfg.get("single_file_train_ratio", data_cfg.get("split", {}).get("train_ratio", 0.7))
+	)
+	single_file_val_ratio = float(
+		train_cfg.get("single_file_val_ratio", data_cfg.get("split", {}).get("val_ratio", 0.15))
+	)
 
 	processed_dir = Path(
 		args.processed_dir
@@ -103,6 +116,13 @@ def run_training(args: argparse.Namespace) -> None:
 	)
 	if not processed_dir.is_absolute():
 		processed_dir = root / processed_dir
+
+	data_file: Path | None = None
+	data_file_str = args.data_file or train_cfg.get("data_file")
+	if data_file_str:
+		data_file = Path(data_file_str)
+		if not data_file.is_absolute():
+			data_file = root / data_file
 
 	manifest_path = Path(
 		args.manifest
@@ -134,55 +154,102 @@ def run_training(args: argparse.Namespace) -> None:
 	log_file = root / "outputs/logs/element_forecasting_train.log"
 	setup_logging(log_file=log_file)
 
-	train_ds = ElementForecastWindowDataset(
-		processed_dir=processed_dir,
-		var_names=var_names,
-		input_steps=input_steps,
-		output_steps=output_steps,
-		window_stride=window_stride,
-		stitch_across_files=stitch_across_files,
-		split="train",
-		manifest_path=manifest_path,
-		norm_stats_path=norm_path,
-		root=root,
-	)
-	val_ds = ElementForecastWindowDataset(
-		processed_dir=processed_dir,
-		var_names=var_names,
-		input_steps=input_steps,
-		output_steps=output_steps,
-		window_stride=window_stride,
-		stitch_across_files=stitch_across_files,
-		split="val",
-		manifest_path=manifest_path,
-		norm_stats_path=norm_path,
-		root=root,
-	)
+	if data_file is not None:
+		full_ds = ElementForecastWindowDataset(
+			data_file=data_file,
+			var_names=var_names,
+			input_steps=input_steps,
+			output_steps=output_steps,
+			window_stride=window_stride,
+			stitch_across_files=stitch_across_files,
+			open_file_lru_size=open_file_lru_size,
+			split=None,
+			norm_stats_path=norm_path,
+			root=root,
+		)
+		n_total = len(full_ds)
+		if n_total < 2:
+			raise SystemExit("single data file has too few windows (<2); adjust input/output steps or provide longer series")
+
+		n_train = int(n_total * single_file_train_ratio)
+		n_val = int(n_total * single_file_val_ratio)
+		n_train = min(max(1, n_train), n_total - 1)
+		n_val = max(1, n_val)
+		if n_train + n_val > n_total:
+			n_val = n_total - n_train
+		if n_val <= 0:
+			raise SystemExit("single-file split produced empty val set; lower single_file_train_ratio or increase sequence length")
+
+		train_indices = list(range(0, n_train))
+		val_indices = list(range(n_total - n_val, n_total))
+		train_ds = Subset(full_ds, train_indices)
+		val_ds = Subset(full_ds, val_indices)
+	else:
+		train_ds = ElementForecastWindowDataset(
+			processed_dir=processed_dir,
+			var_names=var_names,
+			input_steps=input_steps,
+			output_steps=output_steps,
+			window_stride=window_stride,
+			stitch_across_files=stitch_across_files,
+			open_file_lru_size=open_file_lru_size,
+			split="train",
+			manifest_path=manifest_path,
+			norm_stats_path=norm_path,
+			root=root,
+		)
+		val_ds = ElementForecastWindowDataset(
+			processed_dir=processed_dir,
+			var_names=var_names,
+			input_steps=input_steps,
+			output_steps=output_steps,
+			window_stride=window_stride,
+			stitch_across_files=stitch_across_files,
+			open_file_lru_size=open_file_lru_size,
+			split="val",
+			manifest_path=manifest_path,
+			norm_stats_path=norm_path,
+			root=root,
+		)
 	if len(train_ds) == 0:
 		raise SystemExit("train dataset is empty; check split manifest or time window settings")
 
-	batch_size = int(args.batch_size or train_cfg.get("batch_size", 2))
-	num_workers = int(args.num_workers or train_cfg.get("num_workers", 0))
+	batch_size = int(args.batch_size if args.batch_size is not None else train_cfg.get("batch_size", 2))
+	num_workers = int(args.num_workers if args.num_workers is not None else train_cfg.get("num_workers", 0))
+	device = args.device or train_cfg.get("device", "auto")
+	if device == "auto":
+		device = "cuda" if torch.cuda.is_available() else "cpu"
+	if str(device).startswith("cuda"):
+		torch.backends.cuda.matmul.allow_tf32 = True
+		torch.backends.cudnn.allow_tf32 = True
+		torch.backends.cudnn.benchmark = True
+		torch.set_float32_matmul_precision("high")
+	pin_memory = str(device).startswith("cuda")
+	persistent_workers = num_workers > 0
+	loader_kwargs = {
+		"num_workers": num_workers,
+		"pin_memory": pin_memory,
+		"persistent_workers": persistent_workers,
+	}
+	if num_workers > 0:
+		loader_kwargs["prefetch_factor"] = 2
 	train_loader = DataLoader(
 		train_ds,
 		batch_size=batch_size,
 		shuffle=True,
 		collate_fn=_collate,
-		num_workers=num_workers,
+		**loader_kwargs,
 	)
 	val_loader = DataLoader(
 		val_ds,
 		batch_size=batch_size,
 		shuffle=False,
 		collate_fn=_collate,
-		num_workers=num_workers,
+		**loader_kwargs,
 	)
 
 	sample = train_ds[0]
 	in_channels = int(sample["x"].shape[1])
-	device = args.device or train_cfg.get("device", "auto")
-	if device == "auto":
-		device = "cuda" if torch.cuda.is_available() else "cpu"
 
 	model = HybridElementForecastModel(
 		in_channels=in_channels,
@@ -194,11 +261,6 @@ def run_training(args: argparse.Namespace) -> None:
 		block_size=int(model_cfg.get("block_size", 4)),
 		dropout=float(model_cfg.get("dropout", 0.1)),
 		spatial_downsample=int(model_cfg.get("spatial_downsample", 4)),
-		arima_max_p=int(model_cfg.get("arima_max_p", 2)),
-		arima_max_d=int(model_cfg.get("arima_max_d", 1)),
-		arima_max_q=int(model_cfg.get("arima_max_q", 2)),
-		arima_order=model_cfg.get("arima_order"),
-		enable_arima=bool(model_cfg.get("enable_arima", True)),
 	).to(device)
 
 	lr = float(args.lr or train_cfg.get("lr", 1e-4))
@@ -207,16 +269,16 @@ def run_training(args: argparse.Namespace) -> None:
 	loss_aux_transformer_weight = float(train_cfg.get("loss_aux_transformer_weight", 0.2))
 	grad_accum_steps = max(1, int(train_cfg.get("grad_accum_steps", 1)))
 	amp_enabled = bool(train_cfg.get("amp", True)) and str(device).startswith("cuda")
+	amp_device_type = "cuda" if str(device).startswith("cuda") else "cpu"
 	optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-	loss_fn = nn.MSELoss()
-	scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+	scaler = torch.amp.GradScaler(amp_device_type, enabled=amp_enabled)
 
 	best_val = float("inf")
 	best_path = ckpt_dir / "hybrid_best.pt"
 	history: list[dict[str, float]] = []
 
 	_log.info(
-		"start training | vars=%s | input_steps=%d | output_steps=%d | stitch_across_files=%s | channels=%d | grad_accum=%d | amp=%s | train_windows=%d | val_windows=%d",
+		"start training | vars=%s | input_steps=%d | output_steps=%d | stitch_across_files=%s | channels=%d | grad_accum=%d | amp=%s | train_windows=%d | val_windows=%d | data_file=%s | open_file_lru_size=%d",
 		list(var_names),
 		input_steps,
 		output_steps,
@@ -226,6 +288,8 @@ def run_training(args: argparse.Namespace) -> None:
 		amp_enabled,
 		len(train_ds),
 		len(val_ds),
+		str(data_file) if data_file is not None else "",
+		open_file_lru_size,
 	)
 
 	for epoch in range(1, epochs + 1):
@@ -235,15 +299,16 @@ def run_training(args: argparse.Namespace) -> None:
 		optimizer.zero_grad(set_to_none=True)
 		with tqdm_logging():
 			for step, batch in enumerate(tqdm(train_loader, desc=f"epoch {epoch}/{epochs} train"), start=1):
-				x = batch["x"].to(device)
-				y = batch["y"].to(device)
+				x = batch["x"].to(device).nan_to_num(0.0)
+				y = batch["y"].to(device).nan_to_num(0.0)
+				y_valid = batch["y_valid"].to(device)
 				try:
-					with torch.cuda.amp.autocast(enabled=amp_enabled):
+					with torch.amp.autocast(amp_device_type, enabled=amp_enabled):
 						out = model(x)
 						pred = out["pred"]
 						pred_transformer = out["pred_transformer"]
-						loss_main = loss_fn(pred, y)
-						loss_aux = loss_fn(pred_transformer, y)
+						loss_main = masked_mse(pred, y, y_valid)
+						loss_aux = masked_mse(pred_transformer, y, y_valid)
 						loss = loss_main_weight * loss_main + loss_aux_transformer_weight * loss_aux
 				except torch.OutOfMemoryError as ex:
 					if str(device).startswith("cuda"):
@@ -256,14 +321,23 @@ def run_training(args: argparse.Namespace) -> None:
 				scaler.scale(scaled_loss).backward()
 
 				if step % grad_accum_steps == 0:
+					scaler.unscale_(optimizer)
+					torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 					scaler.step(optimizer)
 					scaler.update()
 					optimizer.zero_grad(set_to_none=True)
+					
+				if torch.isnan(loss):
+					_log.error(f"NaN loss detected at step {step}! Input has NaN: {torch.isnan(x).any()}, Target has NaN: {torch.isnan(y).any()}")
+					# stop early for debug
+					return
 
 				train_loss_sum += float(loss.item()) * x.size(0)
 				train_count += x.size(0)
 
 		if train_count > 0 and (len(train_loader) % grad_accum_steps != 0):
+			scaler.unscale_(optimizer)
+			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 			scaler.step(optimizer)
 			scaler.update()
 			optimizer.zero_grad(set_to_none=True)
@@ -273,24 +347,27 @@ def run_training(args: argparse.Namespace) -> None:
 		model.eval()
 		val_loss_sum = 0.0
 		val_count = 0
-		all_pred: list[torch.Tensor] = []
-		all_true: list[torch.Tensor] = []
+		val_metrics_sum = {"mse": 0.0, "mae": 0.0, "nse": 0.0}
+
 		with torch.no_grad():
 			for batch in val_loader:
 				x = batch["x"].to(device)
 				y = batch["y"].to(device)
+				y_valid = batch["y_valid"].to(device)
 				pred = model(x)["pred"]
-				loss = loss_fn(pred, y)
-				val_loss_sum += float(loss.item()) * x.size(0)
-				val_count += x.size(0)
-				all_pred.append(pred.cpu())
-				all_true.append(y.cpu())
+				loss = masked_mse(pred, y, y_valid)
+				bs = x.size(0)
+				val_loss_sum += float(loss.item()) * bs
+				val_count += bs
+
+				# 逐批次计算并累加，防止全部 concat 导致 OOM
+				batch_metrics = compute_regression_metrics_masked(pred, y, y_valid)
+				for k in val_metrics_sum:
+					val_metrics_sum[k] += batch_metrics[k] * bs
 
 		val_loss = val_loss_sum / max(val_count, 1)
-		if all_pred:
-			metrics = compute_regression_metrics(torch.cat(all_pred, dim=0), torch.cat(all_true, dim=0))
-		else:
-			metrics = {"mse": val_loss, "rmse": val_loss ** 0.5, "mae": 0.0, "nse": 0.0}
+		metrics = {k: v / max(val_count, 1) for k, v in val_metrics_sum.items()}
+		metrics["rmse"] = metrics["mse"] ** 0.5
 
 		epoch_record = {
 			"epoch": float(epoch),
@@ -341,12 +418,14 @@ def main() -> None:
 	ap.add_argument("--model-config", type=Path, default=root / "configs/element_forecasting/model.yaml")
 	ap.add_argument("--train-config", type=Path, default=root / "configs/element_forecasting/train.yaml")
 	ap.add_argument("--processed-dir", type=str, default=None)
+	ap.add_argument("--data-file", type=str, default=None, help="单一 NetCDF 文件路径；设置后将忽略 manifest/split")
 	ap.add_argument("--manifest", type=str, default=None)
 	ap.add_argument("--norm", type=str, default=None)
 	ap.add_argument("--var-names", type=str, default=None, help="逗号分隔变量名，输入变量=输出变量")
 	ap.add_argument("--input-steps", type=int, default=None)
 	ap.add_argument("--output-steps", type=int, default=None)
 	ap.add_argument("--window-stride", type=int, default=None)
+	ap.add_argument("--open-file-lru-size", type=int, default=None, help="文件句柄 LRU 大小")
 	ap.add_argument(
 		"--stitch-across-files",
 		action=argparse.BooleanOptionalAction,
