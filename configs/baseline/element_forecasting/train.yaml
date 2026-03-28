@@ -1,6 +1,6 @@
 # 要素预报基线训练参数
 epochs: 5
-batch_size: 4         # 8GB 显存建议 ≤8；显存不足可改为 2 或 1
+batch_size: 4         # 4060 8G 建议起步值；若显存仍有余量可尝试 6
 lr: 0.001
 device: auto          # auto | cuda | cpu
-num_workers: 4        # DataLoader 多进程 worker 数
+num_workers: 2        # 16G 内存下较稳妥的并行读取；若卡顿可降回 0

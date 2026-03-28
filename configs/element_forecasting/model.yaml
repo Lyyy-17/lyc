@@ -8,13 +8,13 @@ var_names:
   - ssv
 
 # 以时间步为单位，而非文件个数
-input_steps: 12
-output_steps: 12
+input_steps: 72
+output_steps: 72
 
 # Transformer with Block Attn-Res
-d_model: 64
-nhead: 4
+d_model: 96
+nhead: 6
 num_layers: 4
 block_size: 4
-dropout: 0.1
-spatial_downsample: 4
+dropout: 0.05
+spatial_downsample: 2

@@ -1,5 +1,5 @@
 # 要素预报 ConvLSTM 基线模型超参数（与 src/element_forecasting 主模型配置分离）
 input_len: 12      # 输入序列长度（帧数）
 forecast_len: 12   # 预测序列长度（帧数）
-hidden: 64         # ConvLSTM 隐藏通道数
-layers: 2          # ConvLSTM 层数
+hidden: 64         # ConvLSTM 隐藏通道数（4060 8G 可用的均衡配置）
+layers: 2          # ConvLSTM 层数（提升时序建模能力）

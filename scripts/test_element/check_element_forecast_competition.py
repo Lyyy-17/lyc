@@ -1,36 +1,45 @@
-"""
-要素预测模型比赛达标检查脚本。
+"""要素预测比赛检查（单文件模式）。
 
-用法（项目根目录）：
+功能：
+1. 仅使用单个 NetCDF 文件构建窗口样本（不走 manifest）。
+2. 单次前向输出若不足 72h，自动循环滚动回灌预测到目标时长。
+3. 统计整体指标 + 各预测步指标，并与比赛阈值对比。
+4. 输出 JSON/CSV/Markdown 报告与多张可视化图片。
 
-  python scripts/08_check_element_forecast_competition.py
-
-默认检查两项：
-1) 预测时长是否 >= 72 小时（支持 12h 滚动到 72h）
-2) 相对 MSE(%) 是否 <= 15
+示例：
+  python scripts/test_element/check_element_forecast_competition.py \
+    --data-file data/processed/element_forecasting/all_clean_merged.nc \
+    --split test --time-step-hours 1 --eval-horizon-hours 72
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from element_forecasting.dataset import ElementForecastWindowDataset
-from element_forecasting.evaluator import compute_regression_metrics_masked
 from element_forecasting.predictor import ElementForecastPredictor
 from utils.dataset_utils import destandardize_tensor, load_norm_stats
-from utils.logger import get_logger, setup_logging
+from utils.logger import get_logger, setup_logging, tqdm, tqdm_logging
+from utils.visualization_defaults import (
+    DEFAULT_CMAP_DIVERGING,
+    apply_matplotlib_defaults,
+    standard_savefig_kwargs,
+)
 
 _log = get_logger(__name__)
 
@@ -40,6 +49,16 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         return {}
     cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return cfg if isinstance(cfg, dict) else {}
+
+
+def _resolve_path(value: str | Path | None, *, default: str | Path | None = None) -> Path | None:
+    raw = value if value is not None else default
+    if raw is None:
+        return None
+    p = Path(raw)
+    if not p.is_absolute():
+        p = ROOT / p
+    return p
 
 
 def _collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
@@ -65,21 +84,12 @@ def _destandardize_batch(
     return out
 
 
-def _relative_mse_percent(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, eps: float = 1e-12) -> float:
-    p = pred.float()
-    t = target.float()
-    m = mask.float()
-    num = torch.sum(((p - t) ** 2) * m)
-    den = torch.sum((t**2) * m).clamp_min(eps)
-    return float((num / den * 100.0).item())
-
-
 def _roll_forecast_std(
     predictor: ElementForecastPredictor,
     x_std: torch.Tensor,
     target_steps: int,
 ) -> torch.Tensor:
-    """滚动预测（标准化空间）：单次输出12h，循环直到 target_steps。"""
+    """滚动预测（标准化空间）：循环回灌直到 target_steps。"""
     if target_steps <= 0:
         raise ValueError("target_steps must be > 0")
 
@@ -100,36 +110,294 @@ def _roll_forecast_std(
         if got >= target_steps:
             break
 
-        # 自回归回灌：保留最近 input_steps 个时间步作为下一轮输入。
         cat = torch.cat([cur_x.float(), pred_std], dim=1)
         cur_x = cat[:, -in_steps:].contiguous()
 
     return torch.cat(chunks, dim=1)
 
 
+def _build_single_file_subset(
+    full_ds: ElementForecastWindowDataset,
+    split: str,
+    train_ratio: float,
+    val_ratio: float,
+) -> tuple[torch.utils.data.Dataset, dict[str, int]]:
+    n_total = len(full_ds)
+    if n_total <= 0:
+        raise SystemExit("single-file dataset is empty")
+
+    if split == "all":
+        return full_ds, {"total": n_total, "train": n_total, "val": 0, "test": 0, "selected": n_total}
+
+    if not (0.0 < train_ratio < 1.0):
+        raise SystemExit("single_file_train_ratio must be in (0,1)")
+    if not (0.0 <= val_ratio < 1.0):
+        raise SystemExit("single_file_val_ratio must be in [0,1)")
+    if train_ratio + val_ratio >= 1.0:
+        raise SystemExit("single_file_train_ratio + single_file_val_ratio must be < 1")
+
+    n_train = int(n_total * train_ratio)
+    n_val = int(n_total * val_ratio)
+    n_test = n_total - n_train - n_val
+
+    if split == "train":
+        indices = list(range(0, n_train))
+    elif split == "val":
+        indices = list(range(n_train, n_train + n_val))
+    elif split == "test":
+        indices = list(range(n_train + n_val, n_total))
+    else:
+        raise SystemExit(f"unsupported split: {split}")
+
+    if not indices:
+        raise SystemExit(
+            f"split={split} has 0 windows under current ratios; total={n_total}, train={n_train}, val={n_val}, test={n_test}"
+        )
+
+    return Subset(full_ds, indices), {
+        "total": n_total,
+        "train": n_train,
+        "val": n_val,
+        "test": n_test,
+        "selected": len(indices),
+    }
+
+
+def _write_per_horizon_csv(
+    path: Path,
+    horizon_hours: np.ndarray,
+    mse_h: np.ndarray,
+    rmse_h: np.ndarray,
+    mae_h: np.ndarray,
+    rel_mse_pct_h: np.ndarray,
+) -> None:
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["step", "horizon_hours", "mse", "rmse", "mae", "relative_mse_percent"])
+        for i in range(horizon_hours.shape[0]):
+            w.writerow(
+                [
+                    i + 1,
+                    float(horizon_hours[i]),
+                    float(mse_h[i]),
+                    float(rmse_h[i]),
+                    float(mae_h[i]),
+                    float(rel_mse_pct_h[i]),
+                ]
+            )
+
+
+def _plot_horizon_metrics(
+    fig_path: Path,
+    horizon_hours: np.ndarray,
+    rmse_h: np.ndarray,
+    mae_h: np.ndarray,
+    rel_mse_pct_h: np.ndarray,
+    mse_percent_threshold: float,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    apply_matplotlib_defaults()
+    fig, axes = plt.subplots(2, 1, figsize=(12, 9), sharex=True)
+
+    ax0 = axes[0]
+    ax0.plot(horizon_hours, rmse_h, marker="o", label="RMSE")
+    ax0.plot(horizon_hours, mae_h, marker="s", label="MAE")
+    ax0.set_ylabel("Error")
+    ax0.set_title("Per-Horizon Error Curves")
+    ax0.legend(loc="best")
+
+    ax1 = axes[1]
+    ax1.plot(horizon_hours, rel_mse_pct_h, marker="o", label="Relative MSE(%)")
+    ax1.axhline(float(mse_percent_threshold), color="tab:red", linestyle="--", label="Threshold")
+    ax1.set_xlabel("Forecast Horizon (hours)")
+    ax1.set_ylabel("Relative MSE (%)")
+    ax1.set_title("Per-Horizon Relative MSE vs Threshold")
+    ax1.legend(loc="best")
+
+    fig.savefig(fig_path, **standard_savefig_kwargs())
+    plt.close(fig)
+
+
+def _plot_competition_comparison(
+    fig_path: Path,
+    horizon_hours: float,
+    horizon_threshold: float,
+    rel_mse_percent: float,
+    mse_percent_threshold: float,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    apply_matplotlib_defaults()
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
+
+    ax0 = axes[0]
+    ax0.bar(["actual", "threshold"], [horizon_hours, horizon_threshold], color=["#4C72B0", "#55A868"])
+    ax0.set_title("Horizon Requirement")
+    ax0.set_ylabel("Hours")
+
+    ax1 = axes[1]
+    ax1.bar(["actual", "threshold"], [rel_mse_percent, mse_percent_threshold], color=["#DD8452", "#C44E52"])
+    ax1.set_title("Relative MSE Requirement")
+    ax1.set_ylabel("Percent")
+
+    fig.savefig(fig_path, **standard_savefig_kwargs())
+    plt.close(fig)
+
+
+def _plot_sample_timeseries(
+    fig_path: Path,
+    sample_pred: torch.Tensor,
+    sample_target: torch.Tensor,
+    sample_mask: torch.Tensor,
+    var_names: tuple[str, ...],
+    time_step_hours: float,
+    max_plot_vars: int,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    apply_matplotlib_defaults()
+    eps = 1e-12
+    pred = sample_pred.float()
+    target = sample_target.float()
+    mask = sample_mask.float()
+
+    valid_hw = torch.sum(mask, dim=(2, 3)).clamp_min(eps)
+    pred_mean = torch.sum(pred * mask, dim=(2, 3)) / valid_hw
+    target_mean = torch.sum(target * mask, dim=(2, 3)) / valid_hw
+
+    t_steps = int(pred.shape[0])
+    hours = (np.arange(t_steps, dtype=np.float64) + 1.0) * float(time_step_hours)
+    n_channels = int(pred.shape[1])
+    n_plot = max(1, min(max_plot_vars, n_channels))
+
+    fig, axes = plt.subplots(n_plot, 1, figsize=(12, 3.2 * n_plot), sharex=True)
+    if n_plot == 1:
+        axes = [axes]
+
+    for c in range(n_plot):
+        name = var_names[c] if c < len(var_names) else f"var_{c}"
+        ax = axes[c]
+        ax.plot(hours, target_mean[:, c].cpu().numpy(), label=f"target-{name}")
+        ax.plot(hours, pred_mean[:, c].cpu().numpy(), label=f"pred-{name}")
+        ax.set_ylabel("Spatial Mean")
+        ax.legend(loc="best")
+
+    axes[-1].set_xlabel("Forecast Horizon (hours)")
+    fig.suptitle("Sample Forecast vs Target (Spatial Mean)")
+    fig.savefig(fig_path, **standard_savefig_kwargs())
+    plt.close(fig)
+
+
+def _plot_sample_map(
+    fig_path: Path,
+    sample_pred: torch.Tensor,
+    sample_target: torch.Tensor,
+    sample_mask: torch.Tensor,
+    var_name: str,
+    time_step_hours: float,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    apply_matplotlib_defaults()
+
+    pred = sample_pred[-1, 0].float().cpu().numpy()
+    target = sample_target[-1, 0].float().cpu().numpy()
+    mask = sample_mask[-1, 0].float().cpu().numpy() > 0.5
+
+    pred = np.where(mask, pred, np.nan)
+    target = np.where(mask, target, np.nan)
+    err = np.where(mask, pred - target, np.nan)
+
+    finite_vals = np.concatenate([pred[np.isfinite(pred)], target[np.isfinite(target)]])
+    if finite_vals.size > 0:
+        vmin = float(np.min(finite_vals))
+        vmax = float(np.max(finite_vals))
+    else:
+        vmin, vmax = -1.0, 1.0
+
+    finite_err = err[np.isfinite(err)]
+    if finite_err.size > 0:
+        emax = float(np.max(np.abs(finite_err)))
+    else:
+        emax = 1.0
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+    hour = sample_pred.shape[0] * float(time_step_hours)
+
+    im0 = axes[0].imshow(target, vmin=vmin, vmax=vmax)
+    axes[0].set_title(f"Target {var_name} (t+{hour:.1f}h)")
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+
+    im1 = axes[1].imshow(pred, vmin=vmin, vmax=vmax)
+    axes[1].set_title(f"Pred {var_name} (t+{hour:.1f}h)")
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+    im2 = axes[2].imshow(err, cmap=DEFAULT_CMAP_DIVERGING, vmin=-emax, vmax=emax)
+    axes[2].set_title("Pred - Target")
+    plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+    fig.savefig(fig_path, **standard_savefig_kwargs())
+    plt.close(fig)
+
+
+def _write_markdown_summary(
+    path: Path,
+    report: dict[str, Any],
+    figure_files: list[str],
+    per_horizon_csv: str,
+) -> None:
+    lines: list[str] = []
+    lines.append("# Element Forecast Competition Check (Single File)")
+    lines.append("")
+    lines.append(f"- Verdict: {'PASS' if report['pass']['overall'] else 'FAIL'}")
+    lines.append(f"- Horizon: {report['model']['horizon_hours']:.2f} h (threshold >= {report['competition_thresholds']['horizon_hours_min']:.2f} h)")
+    lines.append(
+        f"- Relative MSE: {report['metrics']['relative_mse_percent']:.4f}% "
+        f"(threshold <= {report['competition_thresholds']['mse_percent_max']:.4f}%)"
+    )
+    lines.append("")
+    lines.append("## Metrics")
+    lines.append("")
+    lines.append(f"- MSE: {report['metrics']['mse']:.6f}")
+    lines.append(f"- RMSE: {report['metrics']['rmse']:.6f}")
+    lines.append(f"- MAE: {report['metrics']['mae']:.6f}")
+    lines.append(f"- NSE: {report['metrics']['nse']:.6f}")
+    lines.append(f"- Relative MSE(%): {report['metrics']['relative_mse_percent']:.6f}")
+    lines.append("")
+    lines.append("## Files")
+    lines.append("")
+    lines.append(f"- Per-horizon metrics CSV: {per_horizon_csv}")
+    for f in figure_files:
+        lines.append(f"- Figure: {f}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Check element forecasting model against competition requirements")
+    ap = argparse.ArgumentParser(description="Element forecasting competition check (single file mode)")
     ap.add_argument("--data-config", type=Path, default=ROOT / "configs/data_config.yaml")
     ap.add_argument("--train-config", type=Path, default=ROOT / "configs/element_forecasting/train.yaml")
     ap.add_argument("--checkpoint", type=Path, default=ROOT / "outputs/element_forecasting/checkpoints/hybrid_best.pt")
+    ap.add_argument("--data-file", type=str, default=None, help="单一 NetCDF 文件路径（必需；默认读取 train.yaml 的 data_file）")
     ap.add_argument("--processed-dir", type=str, default=None)
-    ap.add_argument("--data-file", type=str, default=None, help="单一 NetCDF 文件；设置后忽略 split/manifest")
-    ap.add_argument("--manifest", type=str, default=None)
     ap.add_argument("--norm", type=str, default=None)
-    ap.add_argument("--split", type=str, default="test", choices=["train", "val", "test"])
-    ap.add_argument("--batch-size", type=int, default=8)
-    ap.add_argument("--num-workers", type=int, default=0)
+    ap.add_argument("--split", type=str, default="test", choices=["train", "val", "test", "all"])
+    ap.add_argument("--single-file-train-ratio", type=float, default=None)
+    ap.add_argument("--single-file-val-ratio", type=float, default=None)
+    ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument("--num-workers", type=int, default=None)
     ap.add_argument("--device", type=str, default="auto")
     ap.add_argument("--time-step-hours", type=float, default=1.0, help="每个时间步代表多少小时")
-    ap.add_argument("--eval-horizon-hours", type=float, default=72.0, help="滚动评估总时长（小时）")
+    ap.add_argument("--eval-horizon-hours", type=float, default=72.0, help="滚动预测目标时长（小时）")
     ap.add_argument("--horizon-hours-threshold", type=float, default=72.0)
     ap.add_argument("--mse-percent-threshold", type=float, default=15.0)
     ap.add_argument("--open-file-lru-size", type=int, default=16)
     ap.add_argument("--max-batches", type=int, default=0, help="仅评估前 N 个 batch；0 表示全部")
+    ap.add_argument("--max-plot-vars", type=int, default=4)
     ap.add_argument(
-        "--output",
+        "--output-dir",
         type=Path,
-        default=ROOT / "outputs/final_results/element_forecasting/competition_check.json",
+        default=ROOT / "outputs/final_results/element_forecasting/competition_single_file",
     )
     args = ap.parse_args()
 
@@ -139,21 +407,27 @@ def main() -> None:
     data_cfg = _load_yaml(args.data_config)
     train_cfg = _load_yaml(args.train_config)
 
-    ckpt = args.checkpoint
-    if not ckpt.is_absolute():
-        ckpt = ROOT / ckpt
-    if not ckpt.is_file():
+    ckpt = _resolve_path(args.checkpoint)
+    if ckpt is None or not ckpt.is_file():
         raise SystemExit(f"checkpoint not found: {ckpt}")
 
-    norm_path_str = (
-        args.norm
-        or train_cfg.get("norm_stats_path")
-        or data_cfg.get("artifacts", {}).get("normalization_files", {}).get("element_forecasting", "data/processed/normalization/element_forecasting_norm.json")
+    output_dir = _resolve_path(args.output_dir)
+    if output_dir is None:
+        raise SystemExit("output_dir is invalid")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir = output_dir / "figures"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    norm_path = _resolve_path(
+        args.norm,
+        default=(
+            train_cfg.get("norm_stats_path")
+            or data_cfg.get("artifacts", {})
+            .get("normalization_files", {})
+            .get("element_forecasting", "data/processed/normalization/element_forecasting_norm.json")
+        ),
     )
-    norm_path = Path(norm_path_str)
-    if not norm_path.is_absolute():
-        norm_path = ROOT / norm_path
-    norm = load_norm_stats(norm_path) if norm_path.is_file() else None
+    norm = load_norm_stats(norm_path) if norm_path is not None and norm_path.is_file() else None
 
     predictor = ElementForecastPredictor(
         checkpoint_path=ckpt,
@@ -161,147 +435,216 @@ def main() -> None:
         norm_stats_path=norm_path,
     )
     var_names = predictor.var_names
-    input_steps = predictor.input_steps
-    model_output_steps = predictor.output_steps
+    if not var_names:
+        cfg_names = tuple(train_cfg.get("var_names", []))
+        if not cfg_names:
+            raise SystemExit("var_names missing in checkpoint and train config")
+        var_names = cfg_names
+
+    input_steps = int(predictor.input_steps)
+    model_output_steps = int(predictor.output_steps)
+
     eval_steps = max(1, int(round(float(args.eval_horizon_hours) / float(args.time_step_hours))))
+    rolling_iters = int(math.ceil(eval_steps / max(model_output_steps, 1)))
 
-    processed_dir = Path(
-        args.processed_dir
-        or train_cfg.get("processed_dir")
-        or data_cfg.get("paths", {}).get("processed", {}).get("element_forecasting", "data/processed/element_forecasting")
+    data_file = _resolve_path(args.data_file, default=train_cfg.get("data_file"))
+    if data_file is None:
+        raise SystemExit("single-file mode requires --data-file or train.yaml:data_file")
+    if not data_file.is_file():
+        raise SystemExit(f"single data file not found: {data_file}")
+
+    processed_dir = _resolve_path(
+        args.processed_dir,
+        default=(
+            train_cfg.get("processed_dir")
+            or data_cfg.get("paths", {}).get("processed", {}).get("element_forecasting", "data/processed/element_forecasting")
+        ),
     )
-    if not processed_dir.is_absolute():
-        processed_dir = ROOT / processed_dir
+    if processed_dir is None:
+        processed_dir = ROOT / "data/processed/element_forecasting"
 
-    manifest_path = Path(
-        args.manifest
-        or train_cfg.get("manifest_path")
-        or data_cfg.get("artifacts", {}).get("split_manifests", {}).get("element_forecasting", "data/processed/splits/element_forecasting.json")
+    train_ratio = float(
+        args.single_file_train_ratio
+        if args.single_file_train_ratio is not None
+        else train_cfg.get("single_file_train_ratio", 0.8)
     )
-    if not manifest_path.is_absolute():
-        manifest_path = ROOT / manifest_path
+    val_ratio = float(
+        args.single_file_val_ratio
+        if args.single_file_val_ratio is not None
+        else train_cfg.get("single_file_val_ratio", 0.2)
+    )
 
-    data_file: Path | None = None
-    data_file_str = args.data_file
-    if data_file_str:
-        data_file = Path(data_file_str)
-        if not data_file.is_absolute():
-            data_file = ROOT / data_file
+    full_ds = ElementForecastWindowDataset(
+        processed_dir=processed_dir,
+        data_file=data_file,
+        var_names=var_names,
+        input_steps=input_steps,
+        output_steps=eval_steps,
+        window_stride=int(train_cfg.get("window_stride", 1)),
+        stitch_across_files=bool(train_cfg.get("stitch_across_files", True)),
+        open_file_lru_size=max(1, int(args.open_file_lru_size)),
+        split=None,
+        manifest_path=None,
+        norm_stats_path=norm_path,
+        root=ROOT,
+    )
+    ds, split_stats = _build_single_file_subset(full_ds, args.split, train_ratio, val_ratio)
 
-    data_source_mode = "manifest_split" if data_file is None else "single_file"
-    try:
-        ds = ElementForecastWindowDataset(
-            processed_dir=processed_dir,
-            data_file=data_file,
-            var_names=var_names,
-            input_steps=input_steps,
-            output_steps=eval_steps,
-            window_stride=int(train_cfg.get("window_stride", 1)),
-            stitch_across_files=bool(train_cfg.get("stitch_across_files", True)),
-            open_file_lru_size=args.open_file_lru_size,
-            split=None if data_file is not None else args.split,
-            manifest_path=manifest_path,
-            norm_stats_path=norm_path,
-            root=ROOT,
-        )
-    except FileNotFoundError as ex:
-        fallback = train_cfg.get("data_file")
-        if data_file is not None or not fallback:
-            raise
-        fb = Path(fallback)
-        if not fb.is_absolute():
-            fb = ROOT / fb
-        _log.warning("manifest split contains missing file, fallback to single data_file: %s | err=%s", fb, ex)
-        ds = ElementForecastWindowDataset(
-            processed_dir=processed_dir,
-            data_file=fb,
-            var_names=var_names,
-            input_steps=input_steps,
-            output_steps=eval_steps,
-            window_stride=int(train_cfg.get("window_stride", 1)),
-            stitch_across_files=bool(train_cfg.get("stitch_across_files", True)),
-            open_file_lru_size=args.open_file_lru_size,
-            split=None,
-            manifest_path=manifest_path,
-            norm_stats_path=norm_path,
-            root=ROOT,
-        )
-        data_file = fb
-        data_source_mode = "single_file_fallback"
-    if len(ds) == 0:
-        raise SystemExit("evaluation dataset is empty")
-
+    batch_size = int(args.batch_size if args.batch_size is not None else train_cfg.get("batch_size", 8))
+    num_workers = int(args.num_workers if args.num_workers is not None else train_cfg.get("num_workers", 0))
     loader = DataLoader(
         ds,
-        batch_size=max(1, int(args.batch_size)),
+        batch_size=max(1, batch_size),
         shuffle=False,
-        num_workers=max(0, int(args.num_workers)),
+        num_workers=max(0, num_workers),
         collate_fn=_collate,
     )
 
-    _log.info("start competition check | windows=%d | split=%s | data_file=%s", len(ds), args.split, str(data_file or ""))
+    _log.info(
+        "start single-file competition check | split=%s | selected_windows=%d | total_windows=%d | data_file=%s | eval_steps=%d | rolling_iters~=%d",
+        args.split,
+        split_stats["selected"],
+        split_stats["total"],
+        str(data_file),
+        eval_steps,
+        rolling_iters,
+    )
 
-    total = 0
-    sum_mse = 0.0
-    sum_rmse = 0.0
-    sum_mae = 0.0
-    sum_nse = 0.0
-    sum_rel_mse_pct = 0.0
+    eps = 1e-12
+    total_samples = 0
+    ss_res_total = 0.0
+    abs_err_total = 0.0
+    mask_total = 0.0
+    target_sum_total = 0.0
+    target_sq_total = 0.0
 
-    for bi, batch in enumerate(loader, start=1):
-        x = batch["x"]
-        y_std = batch["y"]
-        y_valid = batch["y_valid"]
+    ss_res_h = torch.zeros(eval_steps, dtype=torch.float64)
+    abs_err_h = torch.zeros(eval_steps, dtype=torch.float64)
+    mask_h = torch.zeros(eval_steps, dtype=torch.float64)
+    target_sq_h = torch.zeros(eval_steps, dtype=torch.float64)
 
-        pred_std = _roll_forecast_std(predictor, x_std=x.float(), target_steps=eval_steps)
-        pred = _destandardize_batch(pred_std, var_names=var_names, norm=norm)
-        y = _destandardize_batch(y_std.float(), var_names=var_names, norm=norm)
+    sample_pred: torch.Tensor | None = None
+    sample_target: torch.Tensor | None = None
+    sample_mask: torch.Tensor | None = None
 
-        bs = int(x.size(0))
-        m = compute_regression_metrics_masked(pred, y, y_valid)
-        rel_mse_pct = _relative_mse_percent(pred, y, y_valid)
+    with tqdm_logging():
+        for bi, batch in enumerate(tqdm(loader, desc="competition-check"), start=1):
+            x = batch["x"].float()
+            y_std = batch["y"].float()
+            y_valid = batch["y_valid"].float()
 
-        total += bs
-        sum_mse += m["mse"] * bs
-        sum_rmse += m["rmse"] * bs
-        sum_mae += m["mae"] * bs
-        sum_nse += m["nse"] * bs
-        sum_rel_mse_pct += rel_mse_pct * bs
+            pred_std = _roll_forecast_std(predictor, x_std=x, target_steps=eval_steps)
+            pred = _destandardize_batch(pred_std, var_names=var_names, norm=norm)
+            target = _destandardize_batch(y_std, var_names=var_names, norm=norm)
+            mask = y_valid
 
-        if args.max_batches > 0 and bi >= args.max_batches:
-            break
+            diff = (pred - target).float()
+            diff2 = diff.pow(2)
+            absdiff = diff.abs()
 
-    if total <= 0:
-        raise SystemExit("no evaluation samples consumed")
+            ss_res_total += float(torch.sum(diff2 * mask).item())
+            abs_err_total += float(torch.sum(absdiff * mask).item())
+            mask_total += float(torch.sum(mask).item())
+            target_sum_total += float(torch.sum(target * mask).item())
+            target_sq_total += float(torch.sum(target.pow(2) * mask).item())
 
-    metrics = {
-        "mse": sum_mse / total,
-        "rmse": sum_rmse / total,
-        "mae": sum_mae / total,
-        "nse": sum_nse / total,
-        "relative_mse_percent": sum_rel_mse_pct / total,
-    }
+            ss_res_h += torch.sum(diff2 * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+            abs_err_h += torch.sum(absdiff * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+            mask_h += torch.sum(mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+            target_sq_h += torch.sum(target.pow(2) * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+
+            total_samples += int(x.shape[0])
+
+            if sample_pred is None and int(x.shape[0]) > 0:
+                sample_pred = pred[0].detach().cpu()
+                sample_target = target[0].detach().cpu()
+                sample_mask = mask[0].detach().cpu()
+
+            if args.max_batches > 0 and bi >= args.max_batches:
+                _log.warning("stop early by --max-batches=%d", args.max_batches)
+                break
+
+    if total_samples <= 0 or mask_total <= eps:
+        raise SystemExit("no valid evaluation samples consumed")
+
+    mse = ss_res_total / max(mask_total, eps)
+    rmse = math.sqrt(max(mse, 0.0))
+    mae = abs_err_total / max(mask_total, eps)
+
+    ss_tot = target_sq_total - (target_sum_total * target_sum_total) / max(mask_total, eps)
+    nse = 1.0 - (ss_res_total / max(ss_tot, eps))
+    rel_mse_pct = (ss_res_total / max(target_sq_total, eps)) * 100.0
+
+    mse_h = (ss_res_h / torch.clamp_min(mask_h, eps)).cpu().numpy()
+    rmse_h = np.sqrt(np.maximum(mse_h, 0.0))
+    mae_h = (abs_err_h / torch.clamp_min(mask_h, eps)).cpu().numpy()
+    rel_mse_pct_h = ((ss_res_h / torch.clamp_min(target_sq_h, eps)) * 100.0).cpu().numpy()
+    horizon_hours_axis = (np.arange(eval_steps, dtype=np.float64) + 1.0) * float(args.time_step_hours)
 
     horizon_hours = float(eval_steps) * float(args.time_step_hours)
     pass_horizon = horizon_hours >= float(args.horizon_hours_threshold)
-    pass_mse_pct = metrics["relative_mse_percent"] <= float(args.mse_percent_threshold)
+    pass_mse_pct = rel_mse_pct <= float(args.mse_percent_threshold)
     pass_all = bool(pass_horizon and pass_mse_pct)
+
+    per_horizon_csv = output_dir / "per_horizon_metrics.csv"
+    _write_per_horizon_csv(per_horizon_csv, horizon_hours_axis, mse_h, rmse_h, mae_h, rel_mse_pct_h)
+
+    fig1 = figures_dir / "horizon_metrics.png"
+    _plot_horizon_metrics(fig1, horizon_hours_axis, rmse_h, mae_h, rel_mse_pct_h, float(args.mse_percent_threshold))
+
+    fig2 = figures_dir / "competition_threshold_comparison.png"
+    _plot_competition_comparison(
+        fig2,
+        horizon_hours=horizon_hours,
+        horizon_threshold=float(args.horizon_hours_threshold),
+        rel_mse_percent=rel_mse_pct,
+        mse_percent_threshold=float(args.mse_percent_threshold),
+    )
+
+    figure_files = [str(fig1), str(fig2)]
+
+    if sample_pred is not None and sample_target is not None and sample_mask is not None:
+        fig3 = figures_dir / "sample_timeseries_spatial_mean.png"
+        _plot_sample_timeseries(
+            fig3,
+            sample_pred=sample_pred,
+            sample_target=sample_target,
+            sample_mask=sample_mask,
+            var_names=var_names,
+            time_step_hours=float(args.time_step_hours),
+            max_plot_vars=max(1, int(args.max_plot_vars)),
+        )
+        figure_files.append(str(fig3))
+
+        fig4 = figures_dir / "sample_last_horizon_map_var0.png"
+        _plot_sample_map(
+            fig4,
+            sample_pred=sample_pred,
+            sample_target=sample_target,
+            sample_mask=sample_mask,
+            var_name=(var_names[0] if len(var_names) > 0 else "var_0"),
+            time_step_hours=float(args.time_step_hours),
+        )
+        figure_files.append(str(fig4))
 
     report = {
         "task": "element_forecasting",
+        "mode": "single_file",
         "checkpoint": str(ckpt),
         "dataset": {
-            "source_mode": data_source_mode,
+            "data_file": str(data_file),
             "split": args.split,
-            "data_file": str(data_file) if data_file is not None else None,
-            "num_windows": len(ds),
-            "num_eval_samples": total,
+            "total_windows": split_stats["total"],
+            "selected_windows": split_stats["selected"],
+            "single_file_train_ratio": train_ratio,
+            "single_file_val_ratio": val_ratio,
         },
         "model": {
             "var_names": list(var_names),
             "input_steps": input_steps,
             "single_shot_output_steps": model_output_steps,
             "eval_output_steps": eval_steps,
+            "rolling_iterations_estimate": rolling_iters,
             "time_step_hours": float(args.time_step_hours),
             "horizon_hours": horizon_hours,
         },
@@ -309,25 +652,44 @@ def main() -> None:
             "horizon_hours_min": float(args.horizon_hours_threshold),
             "mse_percent_max": float(args.mse_percent_threshold),
         },
-        "metrics": {k: float(v) for k, v in metrics.items()},
+        "metrics": {
+            "mse": float(mse),
+            "rmse": float(rmse),
+            "mae": float(mae),
+            "nse": float(nse),
+            "relative_mse_percent": float(rel_mse_pct),
+        },
         "pass": {
-            "horizon": pass_horizon,
-            "mse_percent": pass_mse_pct,
-            "overall": pass_all,
+            "horizon": bool(pass_horizon),
+            "mse_percent": bool(pass_mse_pct),
+            "overall": bool(pass_all),
+        },
+        "artifacts": {
+            "per_horizon_csv": str(per_horizon_csv),
+            "figures": figure_files,
         },
         "notes": [
-            "relative_mse_percent = sum((pred-target)^2)/sum(target^2)*100（mask有效点）",
-            "若 time_step_hours 不是 1 小时，请通过参数覆盖",
-            "评估采用滚动预测：单次输出窗口循环回灌，直到 eval_horizon_hours",
+            "evaluation is single-file only and uses rolling autoregressive forecasting",
+            "relative_mse_percent = sum((pred-target)^2)/sum(target^2)*100 on valid mask",
+            "if time_step_hours is not 1, pass --time-step-hours explicitly",
         ],
     }
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_json = output_dir / "competition_report.json"
+    report_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    summary_md = output_dir / "competition_summary.md"
+    _write_markdown_summary(summary_md, report, figure_files, str(per_horizon_csv))
 
     verdict = "PASS" if pass_all else "FAIL"
-    _log.info("competition check done | verdict=%s | horizon=%.1fh | rel_mse=%.4f%% | report=%s", verdict, horizon_hours, metrics["relative_mse_percent"], args.output)
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    _log.info(
+        "competition check done | verdict=%s | horizon=%.1fh | rel_mse=%.4f%% | report=%s",
+        verdict,
+        horizon_hours,
+        rel_mse_pct,
+        str(report_json),
+    )
+    _log.info("artifacts ready | summary=%s | per_horizon_csv=%s | figures=%d", str(summary_md), str(per_horizon_csv), len(figure_files))
 
 
 if __name__ == "__main__":

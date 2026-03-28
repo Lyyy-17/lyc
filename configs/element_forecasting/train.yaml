@@ -19,24 +19,25 @@ window_stride: 4
 stitch_across_files: true
 
 # 单文件模式切分（按时间窗数量划分）
-single_file_train_ratio: 0.8
+single_file_train_ratio: 0.7
 single_file_val_ratio: 0.2
+single_file_test_ratio: 0.1
 
 # 文件句柄 LRU 缓存大小
 open_file_lru_size: 16
 
 # 训练超参数
 epochs: 10
-batch_size: 32
+batch_size: 4
 lr: 0.0001
-num_workers: 12
+num_workers: 4
 device: auto
 amp: true
-grad_accum_steps: 1
+grad_accum_steps: 2
 
 # 损失配置
 loss_main_weight: 1.0
-loss_aux_transformer_weight: 0.2
+loss_aux_transformer_weight: 0.0
 
 # 输出目录（中间产物）
 output_dir: outputs/element_forecasting
