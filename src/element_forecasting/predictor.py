@@ -60,16 +60,24 @@ class ElementForecastPredictor:
 		return out
 
 	@torch.no_grad()
-	def predict(self, x: torch.Tensor, denormalize: bool = True) -> dict[str, Any]:
+	def predict(
+		self,
+		x: torch.Tensor,
+		denormalize: bool = True,
+		return_cpu: bool = True,
+	) -> dict[str, Any]:
 		"""x shape: ``(B, input_steps, C, H, W)``。"""
 
 		x = x.to(self.device)
 		out = self.model(x)
-		pred = out["pred"].cpu()
-		pred_transformer = out["pred_transformer"].cpu()
+		pred = out["pred"]
+		pred_transformer = out["pred_transformer"]
 		if denormalize:
 			pred = self._destandardize_pred(pred)
 			pred_transformer = self._destandardize_pred(pred_transformer)
+		if return_cpu:
+			pred = pred.cpu()
+			pred_transformer = pred_transformer.cpu()
 		return {
 			"pred": pred,
 			"pred_transformer": pred_transformer,

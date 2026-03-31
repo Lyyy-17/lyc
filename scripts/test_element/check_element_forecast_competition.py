@@ -99,7 +99,7 @@ def _roll_forecast_std(
     in_steps = int(predictor.input_steps)
 
     while got < target_steps:
-        out = predictor.predict(cur_x, denormalize=False)
+        out = predictor.predict(cur_x, denormalize=False, return_cpu=False)
         pred_std = out["pred"].float()
         if pred_std.ndim != 5:
             raise RuntimeError("predictor output shape is invalid")
@@ -388,7 +388,7 @@ def main() -> None:
     ap.add_argument("--num-workers", type=int, default=None)
     ap.add_argument("--device", type=str, default="auto")
     ap.add_argument("--time-step-hours", type=float, default=1.0, help="每个时间步代表多少小时")
-    ap.add_argument("--eval-horizon-hours", type=float, default=72.0, help="滚动预测目标时长（小时）")
+    ap.add_argument("--eval-horizon-hours", type=float, default=None, help="滚动预测目标时长（小时）。默认自动取模型自身输出长度与比赛目标之间的最大值")
     ap.add_argument("--horizon-hours-threshold", type=float, default=72.0)
     ap.add_argument("--mse-percent-threshold", type=float, default=15.0)
     ap.add_argument("--open-file-lru-size", type=int, default=16)
@@ -444,7 +444,12 @@ def main() -> None:
     input_steps = int(predictor.input_steps)
     model_output_steps = int(predictor.output_steps)
 
-    eval_steps = max(1, int(round(float(args.eval_horizon_hours) / float(args.time_step_hours))))
+    if args.eval_horizon_hours is not None and args.eval_horizon_hours > 0:
+        eval_steps = max(1, int(round(float(args.eval_horizon_hours) / float(args.time_step_hours))))
+    else:
+        req_steps = max(1, int(math.ceil(float(args.horizon_hours_threshold) / float(args.time_step_hours))))
+        eval_steps = max(model_output_steps, req_steps)
+
     rolling_iters = int(math.ceil(eval_steps / max(model_output_steps, 1)))
 
     data_file = _resolve_path(args.data_file, default=train_cfg.get("data_file"))
@@ -510,6 +515,7 @@ def main() -> None:
     _log.info("=" * 60)
 
     eps = 1e-12
+    compute_device = predictor.device
     total_samples = 0
     ss_res_total = 0.0
     abs_err_total = 0.0
@@ -517,10 +523,10 @@ def main() -> None:
     target_sum_total = 0.0
     target_sq_total = 0.0
 
-    ss_res_h = torch.zeros(eval_steps, dtype=torch.float64)
-    abs_err_h = torch.zeros(eval_steps, dtype=torch.float64)
-    mask_h = torch.zeros(eval_steps, dtype=torch.float64)
-    target_sq_h = torch.zeros(eval_steps, dtype=torch.float64)
+    ss_res_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
+    abs_err_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
+    mask_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
+    target_sq_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
 
     sample_pred: torch.Tensor | None = None
     sample_target: torch.Tensor | None = None
@@ -529,9 +535,9 @@ def main() -> None:
     with tqdm_logging():
         pbar = tqdm(loader, desc="Comp-Check", ncols=100)
         for bi, batch in enumerate(pbar, start=1):
-            x = batch["x"].float()
-            y_std = batch["y"].float()
-            y_valid = batch["y_valid"].float()
+            x = batch["x"].float().to(compute_device, non_blocking=True)
+            y_std = batch["y"].float().to(compute_device, non_blocking=True)
+            y_valid = batch["y_valid"].float().to(compute_device, non_blocking=True)
 
             pred_std = _roll_forecast_std(predictor, x_std=x, target_steps=eval_steps)
             pred = _destandardize_batch(pred_std, var_names=var_names, norm=norm)
