@@ -116,7 +116,7 @@ def test_predictor_denormalize_outputs(tmp_path) -> None:
                 "num_layers": 1,
                 "block_size": 2,
                 "dropout": 0.0,
-                "spatial_downsample": 1,
+                "spatial_downsample": 4,
             },
         },
         ckpt_path,
@@ -129,7 +129,7 @@ def test_predictor_denormalize_outputs(tmp_path) -> None:
     )
 
     predictor = ElementForecastPredictor(ckpt_path, device="cpu", norm_stats_path=norm_path)
-    x = torch.zeros(1, 2, 1, 2, 2)
+    x = torch.zeros(1, 2, 1, 4, 4)
 
     out_std = predictor.predict(x, denormalize=False)
     out_denorm = predictor.predict(x, denormalize=True)

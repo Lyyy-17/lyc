@@ -102,8 +102,8 @@ class BlockResidualTransformerEncoder(nn.Module):
 		return x
 
 
-class TransformerForecastBranch(nn.Module):
-	"""将每个网格点作为 token 序列建模并输出多步预测。"""
+class SpatioTemporalTransformerBranch(nn.Module):
+	"""时空双轨 Transformer：先在每帧内进行空间 Attention，再沿时间轴进行 Temporal Attention。"""
 
 	def __init__(
 		self,
@@ -121,77 +121,80 @@ class TransformerForecastBranch(nn.Module):
 		self.in_channels = in_channels
 		self.input_steps = input_steps
 		self.output_steps = output_steps
-		self.spatial_downsample = max(1, int(spatial_downsample))
-		self.in_proj = nn.Linear(in_channels, d_model)
-		self.pos_emb = nn.Parameter(torch.zeros(1, input_steps, d_model))
-		# Time-of-Day Embedding: Sin and Cos projection
+		self.patch_size = max(1, int(spatial_downsample))
+
+		self.patch_embed = nn.Conv2d(
+			in_channels, d_model, kernel_size=self.patch_size, stride=self.patch_size
+		)
+		
+		# 预设最大网格数量
+		self.max_spatial_tokens = 4096
+		self.spa_pos_emb = nn.Parameter(torch.zeros(1, self.max_spatial_tokens, d_model))
+
+		num_spa_layers = max(1, num_layers // 2)
+		spa_layer = nn.TransformerEncoderLayer(
+			d_model=d_model, nhead=nhead, dim_feedforward=int(d_model * 4), 
+			dropout=dropout, batch_first=True, norm_first=True
+		)
+		self.spatial_encoder = nn.TransformerEncoder(spa_layer, num_layers=num_spa_layers)
+
+		self.tem_pos_emb = nn.Parameter(torch.zeros(1, input_steps, d_model))
 		self.tod_emb = nn.Linear(2, d_model)
-		self.encoder = BlockResidualTransformerEncoder(
-			num_layers=num_layers,
+
+		num_tem_layers = max(1, num_layers - num_spa_layers)
+		self.temporal_encoder = BlockResidualTransformerEncoder(
+			num_layers=num_tem_layers,
 			d_model=d_model,
 			nhead=nhead,
 			block_size=block_size,
 			dropout=dropout,
 		)
-		self.out_proj = nn.Linear(d_model, output_steps * in_channels)
+
+		self.out_proj = nn.Linear(d_model, output_steps * in_channels * self.patch_size * self.patch_size)
 
 	def forward(self, x: torch.Tensor, t0: torch.Tensor | None = None) -> torch.Tensor:
 		if x.dim() != 5:
 			raise ValueError(f"expected x with shape (B,T,C,H,W), got {tuple(x.shape)}")
 		bsz, t_in, ch, h, w = x.shape
-		if t_in != self.input_steps:
-			raise ValueError(f"expected input_steps={self.input_steps}, got {t_in}")
-		if ch != self.in_channels:
-			raise ValueError(f"expected in_channels={self.in_channels}, got {ch}")
+		
+		# 1. Patch Embedding & 空间 Transformer
+		x_reshaped = x.reshape(bsz * t_in, ch, h, w)
+		patches = self.patch_embed(x_reshaped)
+		_, d, h_r, w_r = patches.shape
+		num_spatial_tokens = h_r * w_r
+		
+		spa_tokens = patches.reshape(bsz * t_in, d, num_spatial_tokens).permute(0, 2, 1)
+		spa_tokens = spa_tokens + self.spa_pos_emb[:, :num_spatial_tokens, :]
+		spa_out = self.spatial_encoder(spa_tokens)
 
-		if self.spatial_downsample > 1:
-			xr = x.reshape(bsz * t_in, ch, h, w)
-			xr = F.avg_pool2d(xr, kernel_size=self.spatial_downsample, stride=self.spatial_downsample)
-			h_r, w_r = xr.shape[-2], xr.shape[-1]
-			x_work = xr.reshape(bsz, t_in, ch, h_r, w_r)
-		else:
-			h_r, w_r = h, w
-			x_work = x
-
-		# Time-of-Day Embedding (using t0 if provided, else relative sequence)
+		# 2. 时空转换与时间 Transformer (B, Grid, T_in, D)
+		tem_tokens = spa_out.view(bsz, t_in, num_spatial_tokens, d).permute(0, 2, 1, 3)
+		
 		device = x.device
 		seq_idx = torch.arange(t_in, device=device).unsqueeze(0).expand(bsz, t_in)
-		if t0 is not None:
-			# t0 shape: (B,)
-			abs_time = seq_idx + t0.unsqueeze(1)
-		else:
-			abs_time = seq_idx
-		
-		# 假设 1 step = 1 小时周期
+		abs_time = (seq_idx + t0.unsqueeze(1)) if t0 is not None else seq_idx
+			
 		sin_tod = torch.sin(2 * torch.pi * abs_time / 24.0).unsqueeze(-1)
 		cos_tod = torch.cos(2 * torch.pi * abs_time / 24.0).unsqueeze(-1)
-		tod_feats = torch.cat([sin_tod, cos_tod], dim=-1) # (B, T_in, 2)
-		tod_embeds = self.tod_emb(tod_feats) # (B, T_in, d_model)
-
-		# 优化掉显存杀手：利用张量广播 (Broadcasting) 代替暴力的 expand() + reshape()。
-		# token shape 这里还是 (B*H*W, T_in, C)
-		token_flat = x_work.permute(0, 3, 4, 1, 2).reshape(bsz * h_r * w_r, t_in, ch)
+		tod_embeds = self.tod_emb(torch.cat([sin_tod, cos_tod], dim=-1))
 		
-		# 将 token 恢复成带有 batch 维度的以便加时间编码
-		h_tok_view = self.in_proj(token_flat).view(bsz, h_r * w_r, t_in, -1)
+		tem_tokens = tem_tokens + self.tem_pos_emb[:, :t_in, :].unsqueeze(1) + tod_embeds.unsqueeze(1)
+		tem_in = tem_tokens.reshape(bsz * num_spatial_tokens, t_in, d)
+		tem_out = self.temporal_encoder(tem_in) 
 		
-		# tod_embeds shape: (B, T_in, D) -> (B, 1, T_in, D) 
-		# pos_emb shape: (1, T_in, D) -> (1, 1, T_in, D)
-		# 利用广播机制 zero-copy 完成位置编码累加
-		h_tok_view = h_tok_view + self.pos_emb[:, :t_in, :].unsqueeze(1) + tod_embeds.unsqueeze(1)
+		# 3. 解码头
+		tail = tem_out[:, -1, :]
+		pred_flat = self.out_proj(tail)
 		
-		# 加完后展平喂给后续的 attention
-		h_tok = h_tok_view.reshape(bsz * h_r * w_r, t_in, -1)
-		h_tok = self.encoder(h_tok)
-		tail = h_tok[:, -1, :]
-		pred_low = self.out_proj(tail).view(bsz, h_r, w_r, self.output_steps, ch)
-		pred_low = pred_low.permute(0, 3, 4, 1, 2).contiguous()
-
-		if self.spatial_downsample > 1:
-			up = pred_low.reshape(bsz * self.output_steps, ch, h_r, w_r)
-			up = F.interpolate(up, size=(h, w), mode="bilinear", align_corners=False)
-			return up.reshape(bsz, self.output_steps, ch, h, w).contiguous()
-		return pred_low
+		pred = pred_flat.view(bsz, h_r, w_r, self.output_steps, ch, self.patch_size, self.patch_size)
+		pred = pred.permute(0, 3, 4, 1, 5, 2, 6).contiguous()
+		pred = pred.reshape(bsz, self.output_steps, ch, h_r * self.patch_size, w_r * self.patch_size)
+		
+		if pred.shape[-2:] != (h, w):
+			pred = F.interpolate(pred.flatten(0,1), size=(h, w), mode="bilinear", align_corners=False)
+			pred = pred.view(bsz, self.output_steps, ch, h, w)
+			
+		return pred
 
 
 class HybridElementForecastModel(nn.Module):
@@ -211,7 +214,7 @@ class HybridElementForecastModel(nn.Module):
 	) -> None:
 		super().__init__()
 		self.output_steps = output_steps
-		self.transformer = TransformerForecastBranch(
+		self.transformer = SpatioTemporalTransformerBranch(
 			in_channels=in_channels,
 			input_steps=input_steps,
 			output_steps=output_steps,
