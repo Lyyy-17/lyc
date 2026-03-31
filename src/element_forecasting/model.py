@@ -128,7 +128,7 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		)
 		
 		# 预设最大网格数量
-		self.max_spatial_tokens = 4096
+		self.max_spatial_tokens = 32768
 		self.spa_pos_emb = nn.Parameter(torch.zeros(1, self.max_spatial_tokens, d_model))
 
 		num_spa_layers = max(1, num_layers // 2)

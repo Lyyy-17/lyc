@@ -1,0 +1,10 @@
+{
+  "task": "element_forecasting",
+  "train": [
+    "outputs/smoke_element_baseline/fake_clean.nc"
+  ],
+  "val": [
+    "outputs/smoke_element_baseline/fake_clean.nc"
+  ],
+  "test": []
+}
