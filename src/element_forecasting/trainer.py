@@ -12,7 +12,12 @@ import yaml
 from torch.utils.data import DataLoader
 
 from element_forecasting.dataset import ElementForecastWindowDataset
-from element_forecasting.evaluator import compute_regression_metrics_masked, masked_mse
+from element_forecasting.evaluator import (
+	compute_regression_metrics_masked,
+	masked_mse,
+	masked_spatial_mean_mse,
+	masked_weighted_mse,
+)
 from element_forecasting.model import HybridElementForecastModel
 from utils.logger import get_logger, setup_logging, tqdm, tqdm_logging
 
@@ -208,6 +213,16 @@ def run_training(args: argparse.Namespace) -> None:
 	epochs = int(args.epochs or train_cfg.get("epochs", 10))
 	loss_main_weight = float(train_cfg.get("loss_main_weight", 1.0))
 	loss_aux_transformer_weight = float(train_cfg.get("loss_aux_transformer_weight", 0.2))
+	loss_spatial_mean_weight = float(train_cfg.get("loss_spatial_mean_weight", 0.2))
+	loss_aux_spatial_mean_weight = float(train_cfg.get("loss_aux_spatial_mean_weight", 0.05))
+	var_loss_weights_cfg = train_cfg.get("var_loss_weights", {})
+	if not isinstance(var_loss_weights_cfg, dict):
+		var_loss_weights_cfg = {}
+	channel_weights = torch.tensor(
+		[float(var_loss_weights_cfg.get(v, 1.0)) for v in var_names],
+		dtype=torch.float32,
+		device=device,
+	).view(1, 1, -1, 1, 1)
 	grad_accum_steps = max(1, int(train_cfg.get("grad_accum_steps", 1)))
 	amp_enabled = bool(train_cfg.get("amp", True)) and str(device).startswith("cuda")
 	amp_device_type = "cuda" if str(device).startswith("cuda") else "cpu"
@@ -219,7 +234,7 @@ def run_training(args: argparse.Namespace) -> None:
 	history: list[dict[str, float]] = []
 
 	_log.info(
-		"start training | vars=%s | input_steps=%d | output_steps=%d | data_file=%s | split=(%.3f,%.3f,%.3f) | channels=%d | grad_accum=%d | amp=%s | train_windows=%d | val_windows=%d | open_file_lru_size=%d",
+		"start training | vars=%s | input_steps=%d | output_steps=%d | data_file=%s | split=(%.3f,%.3f,%.3f) | channels=%d | grad_accum=%d | amp=%s | train_windows=%d | val_windows=%d | open_file_lru_size=%d | var_loss_weights=%s | loss_spatial_mean_weight=%.3f | loss_aux_spatial_mean_weight=%.3f",
 		list(var_names),
 		input_steps,
 		output_steps,
@@ -233,6 +248,9 @@ def run_training(args: argparse.Namespace) -> None:
 		len(train_ds),
 		len(val_ds),
 		open_file_lru_size,
+		{v: float(var_loss_weights_cfg.get(v, 1.0)) for v in var_names},
+		loss_spatial_mean_weight,
+		loss_aux_spatial_mean_weight,
 	)
 
 	for epoch in range(1, epochs + 1):
@@ -250,9 +268,16 @@ def run_training(args: argparse.Namespace) -> None:
 						out = model(x)
 						pred = out["pred"]
 						pred_transformer = out["pred_transformer"]
-						loss_main = masked_mse(pred, y, y_valid)
-						loss_aux = masked_mse(pred_transformer, y, y_valid)
-						loss = loss_main_weight * loss_main + loss_aux_transformer_weight * loss_aux
+						loss_main = masked_weighted_mse(pred, y, y_valid, channel_weights=channel_weights)
+						loss_aux = masked_weighted_mse(pred_transformer, y, y_valid, channel_weights=channel_weights)
+						loss_main_mean = masked_spatial_mean_mse(pred, y, y_valid, channel_weights=channel_weights)
+						loss_aux_mean = masked_spatial_mean_mse(pred_transformer, y, y_valid, channel_weights=channel_weights)
+						loss = (
+							loss_main_weight * loss_main
+							+ loss_aux_transformer_weight * loss_aux
+							+ loss_spatial_mean_weight * loss_main_mean
+							+ loss_aux_spatial_mean_weight * loss_aux_mean
+						)
 				except torch.OutOfMemoryError as ex:
 					if str(device).startswith("cuda"):
 						torch.cuda.empty_cache()

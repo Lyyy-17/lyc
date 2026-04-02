@@ -6,6 +6,7 @@ import json
 import torch
 
 from element_forecasting.dataset import ElementForecastWindowDataset
+from element_forecasting.evaluator import masked_spatial_mean_mse, masked_weighted_mse
 from element_forecasting.model import HybridElementForecastModel
 from element_forecasting.predictor import ElementForecastPredictor
 from element_forecasting.trainer import resolve_core_config
@@ -188,3 +189,19 @@ def test_resolve_core_config_override_priority() -> None:
     assert cfg2["input_steps"] == 10
     assert cfg2["output_steps"] == 4
     assert cfg2["window_stride"] == 3
+
+
+def test_weighted_and_spatial_mean_losses() -> None:
+    # shape: [B=1, T=1, C=2, H=1, W=2]
+    pred = torch.tensor([[[[[0.0, 0.0]], [[0.0, 0.0]]]]])
+    target = torch.tensor([[[[[1.0, 1.0]], [[2.0, 2.0]]]]])
+    mask = torch.ones_like(pred)
+    channel_weights = torch.tensor([1.0, 2.0]).view(1, 1, 2, 1, 1)
+
+    # ch0 mse=1, ch1 mse=4; weighted mean=(1*1 + 4*2)/(1+2)=3
+    loss_point = masked_weighted_mse(pred, target, mask, channel_weights=channel_weights)
+    assert torch.allclose(loss_point, torch.tensor(3.0), atol=1e-6)
+
+    # 空间均值与逐点一致（每通道常数场）
+    loss_mean = masked_spatial_mean_mse(pred, target, mask, channel_weights=channel_weights)
+    assert torch.allclose(loss_mean, torch.tensor(3.0), atol=1e-6)
