@@ -117,12 +117,23 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		block_size: int = 4,
 		dropout: float = 0.1,
 		spatial_downsample: int = 4,
+		periodic_periods: tuple[float, ...] | list[float] | None = None,
+		periodic_harmonics: int = 1,
 	) -> None:
 		super().__init__()
 		self.in_channels = in_channels
 		self.input_steps = input_steps
 		self.output_steps = output_steps
 		self.patch_size = max(1, int(spatial_downsample))
+		if periodic_periods is None:
+			periodic_periods = (24.0,)
+		periods = [float(p) for p in periodic_periods if float(p) > 0]
+		if not periods:
+			periods = [24.0]
+		self.periodic_harmonics = max(1, int(periodic_harmonics))
+		period_tensor = torch.tensor(periods, dtype=torch.float32)
+		self.register_buffer("periodic_periods", period_tensor, persistent=False)
+		self.time_feature_dim = int(2 * len(periods) * self.periodic_harmonics)
 
 		self.patch_embed = nn.Conv2d(
 			in_channels, d_model, kernel_size=self.patch_size, stride=self.patch_size
@@ -140,7 +151,7 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		self.spatial_encoder = nn.TransformerEncoder(spa_layer, num_layers=num_spa_layers)
 
 		self.tem_pos_emb = nn.Parameter(torch.zeros(1, input_steps, d_model))
-		self.tod_emb = nn.Linear(2, d_model)
+		self.tod_emb = nn.Linear(self.time_feature_dim, d_model)
 
 		num_tem_layers = max(1, num_layers - num_spa_layers)
 		self.temporal_encoder = BlockResidualTransformerEncoder(
@@ -152,6 +163,22 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		)
 
 		self.out_proj = nn.Linear(d_model, output_steps * in_channels * self.patch_size * self.patch_size)
+
+	def _build_periodic_time_features(self, abs_time: torch.Tensor) -> torch.Tensor:
+		"""Build multi-period harmonic features with shape (B, T, 2 * periods * harmonics)."""
+
+		t = abs_time.to(dtype=torch.float32).unsqueeze(-1).unsqueeze(-1)
+		periods = self.periodic_periods.to(device=abs_time.device, dtype=torch.float32).view(1, 1, -1, 1)
+		harmonics = torch.arange(
+			1,
+			self.periodic_harmonics + 1,
+			device=abs_time.device,
+			dtype=torch.float32,
+		).view(1, 1, 1, -1)
+		angles = 2.0 * torch.pi * harmonics * t / periods
+		sin_feat = torch.sin(angles)
+		cos_feat = torch.cos(angles)
+		return torch.cat([sin_feat, cos_feat], dim=-1).flatten(start_dim=2)
 
 	def forward(self, x: torch.Tensor, t0: torch.Tensor | None = None) -> torch.Tensor:
 		if x.dim() != 5:
@@ -175,9 +202,8 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		seq_idx = torch.arange(t_in, device=device).unsqueeze(0).expand(bsz, t_in)
 		abs_time = (seq_idx + t0.unsqueeze(1)) if t0 is not None else seq_idx
 			
-		sin_tod = torch.sin(2 * torch.pi * abs_time / 24.0).unsqueeze(-1)
-		cos_tod = torch.cos(2 * torch.pi * abs_time / 24.0).unsqueeze(-1)
-		tod_embeds = self.tod_emb(torch.cat([sin_tod, cos_tod], dim=-1))
+		periodic_feats = self._build_periodic_time_features(abs_time)
+		tod_embeds = self.tod_emb(periodic_feats)
 		
 		tem_tokens = tem_tokens + self.tem_pos_emb[:, :t_in, :].unsqueeze(1) + tod_embeds.unsqueeze(1)
 		tem_in = tem_tokens.reshape(bsz * num_spatial_tokens, t_in, d)
@@ -212,6 +238,8 @@ class HybridElementForecastModel(nn.Module):
 		block_size: int = 4,
 		dropout: float = 0.1,
 		spatial_downsample: int = 4,
+		periodic_periods: tuple[float, ...] | list[float] | None = None,
+		periodic_harmonics: int = 1,
 	) -> None:
 		super().__init__()
 		self.output_steps = output_steps
@@ -225,6 +253,8 @@ class HybridElementForecastModel(nn.Module):
 			block_size=block_size,
 			dropout=dropout,
 			spatial_downsample=spatial_downsample,
+			periodic_periods=periodic_periods,
+			periodic_harmonics=periodic_harmonics,
 		)
 
 	def forward(self, x: torch.Tensor, t0: torch.Tensor | None = None) -> dict[str, torch.Tensor]:

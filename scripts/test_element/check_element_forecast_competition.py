@@ -130,11 +130,11 @@ def _build_single_file_subset(
         return full_ds, {"total": n_total, "train": n_total, "val": 0, "test": 0, "selected": n_total}
 
     if not (0.0 < train_ratio < 1.0):
-        raise SystemExit("single_file_train_ratio must be in (0,1)")
+        raise SystemExit("train_ratio (or single_file_train_ratio) must be in (0,1)")
     if not (0.0 <= val_ratio < 1.0):
-        raise SystemExit("single_file_val_ratio must be in [0,1)")
+        raise SystemExit("val_ratio (or single_file_val_ratio) must be in [0,1)")
     if train_ratio + val_ratio >= 1.0:
-        raise SystemExit("single_file_train_ratio + single_file_val_ratio must be < 1")
+        raise SystemExit("train_ratio + val_ratio must be < 1")
 
     n_train = int(n_total * train_ratio)
     n_val = int(n_total * val_ratio)
@@ -458,38 +458,25 @@ def main() -> None:
     if not data_file.is_file():
         raise SystemExit(f"single data file not found: {data_file}")
 
-    processed_dir = _resolve_path(
-        args.processed_dir,
-        default=(
-            train_cfg.get("processed_dir")
-            or data_cfg.get("paths", {}).get("processed", {}).get("element_forecasting", "data/processed/element_forecasting")
-        ),
-    )
-    if processed_dir is None:
-        processed_dir = ROOT / "data/processed/element_forecasting"
-
     train_ratio = float(
         args.single_file_train_ratio
         if args.single_file_train_ratio is not None
-        else train_cfg.get("single_file_train_ratio", 0.8)
+        else train_cfg.get("train_ratio", train_cfg.get("single_file_train_ratio", 0.8))
     )
     val_ratio = float(
         args.single_file_val_ratio
         if args.single_file_val_ratio is not None
-        else train_cfg.get("single_file_val_ratio", 0.2)
+        else train_cfg.get("val_ratio", train_cfg.get("single_file_val_ratio", 0.2))
     )
 
     full_ds = ElementForecastWindowDataset(
-        processed_dir=processed_dir,
         data_file=data_file,
         var_names=var_names,
         input_steps=input_steps,
         output_steps=eval_steps,
         window_stride=int(train_cfg.get("window_stride", 1)),
-        stitch_across_files=bool(train_cfg.get("stitch_across_files", True)),
         open_file_lru_size=max(1, int(args.open_file_lru_size)),
         split=None,
-        manifest_path=None,
         norm_stats_path=norm_path,
         root=ROOT,
     )

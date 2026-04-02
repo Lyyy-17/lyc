@@ -37,6 +37,8 @@ class ElementForecastPredictor:
 			block_size=int(model_cfg.get("block_size", 4)),
 			dropout=float(model_cfg.get("dropout", 0.1)),
 			spatial_downsample=int(model_cfg.get("spatial_downsample", 4)),
+			periodic_periods=model_cfg.get("periodic_periods", [24.0]),
+			periodic_harmonics=int(model_cfg.get("periodic_harmonics", 1)),
 		)
 		self.model.load_state_dict(ckpt["model_state"])
 		self.model.to(self.device)
