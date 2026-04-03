@@ -34,8 +34,8 @@ def load_dataset_info(data_path):
     try:
         dataset = ElementForecastWindowDataset(
             data_file=data_path,
-            input_steps=12,
-            output_steps=12,
+            input_steps=24,
+            output_steps=24,
             split=None
         )
         
@@ -140,8 +140,8 @@ def draw_spatial_plot(pred_numpy, mask_numpy, var_names, step_idx):
 
     fig.update_layout(
         height=800, 
-        paper_bgcolor='rgba(0,0,0,0)', 
-        plot_bgcolor='rgba(0,0,0,0)', # 改为全透明，陆地部分将完美融入 Gradio 当前的主题背景（明/暗色自动适配）
+        paper_bgcolor='white', 
+        plot_bgcolor='#dddddd', # 利用透明NaN与深灰背景实现陆地等掩码效果
         margin=dict(l=20, r=20, t=60, b=20)
     )
     return fig
@@ -187,10 +187,10 @@ def draw_curve_plot(pred_numpy, mask_numpy, var_names):
         )
         fig.add_trace(sc, row=row, col=col)
         
-        fig.update_xaxes(title_text="预报时间 (Hours)", showgrid=True, gridcolor='rgba(128,128,128,0.2)', row=row, col=col)
-        fig.update_yaxes(title_text=f"平均 {var_name}", showgrid=True, gridcolor='rgba(128,128,128,0.2)', row=row, col=col)
+        fig.update_xaxes(title_text="预报时间 (Hours)", showgrid=True, gridcolor='lightgray', row=row, col=col)
+        fig.update_yaxes(title_text=f"平均 {var_name}", showgrid=True, gridcolor='lightgray', row=row, col=col)
         
-    fig.update_layout(height=600, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(height=600, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
 def element_forecasting_logic(model_path, data_path, start_idx):
@@ -205,7 +205,7 @@ def element_forecasting_logic(model_path, data_path, start_idx):
     
     try:
         dataset = ElementForecastWindowDataset(
-            data_file=data_path, input_steps=12, output_steps=12, split=None
+            data_file=data_path, input_steps=24, output_steps=24, split=None
         )
 
         idx = int(start_idx)
@@ -264,7 +264,7 @@ def create_gui():
             with gr.Column():
                 with gr.Row():
                     with gr.Column(scale=1):
-                        model_input = gr.Textbox(value="models/forecast_model.pt", label="模型路径 (Checkpoint)")
+                        model_input = gr.Textbox(value="outputs/element_forecasting/checkpoints/hybrid_best.pt", label="模型路径 (Checkpoint)")
                         with gr.Row():
                             data_input = gr.Textbox(value="data/processed/element_forecasting/示例数据.nc", label="测试输入数据序列路径 (.nc)")
                             load_btn = gr.Button("加载数据信息", size="sm")
