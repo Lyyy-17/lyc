@@ -12,6 +12,7 @@ label_dir: data/processed/eddy_detection_labels
 epochs: 1
 batch_size: 8
 num_workers: 0
+open_file_lru_size: 8
 lr: 0.001
 dice_weight: 0.5
 device: auto

@@ -73,6 +73,7 @@ def parse_args() -> argparse.Namespace:
 	ap.add_argument("--seed", type=int, default=None)
 	ap.add_argument("--max-train-samples", type=int, default=None)
 	ap.add_argument("--max-val-samples", type=int, default=None)
+	ap.add_argument("--open-file-lru-size", type=int, default=None)
 	return ap.parse_args()
 
 
@@ -109,6 +110,11 @@ def main() -> None:
 
 	task_type = str(args.task_type or train_cfg.get("task_type", "binary"))
 	label_cfg = EddyLabelConfig(label_dir=label_dir, task_type=task_type)
+	open_file_lru_size = int(
+		args.open_file_lru_size
+		if args.open_file_lru_size is not None
+		else train_cfg.get("open_file_lru_size", 8)
+	)
 
 	train_ds = EddySegDataset(
 		processed_dir=processed_dir,
@@ -118,6 +124,7 @@ def main() -> None:
 		norm_stats_path=norm_stats if norm_stats.is_file() else None,
 		label_cfg=label_cfg,
 		augment=bool(train_cfg.get("augment", True)),
+		open_file_lru_size=open_file_lru_size,
 		root=ROOT,
 	)
 	val_ds = EddySegDataset(
@@ -128,6 +135,7 @@ def main() -> None:
 		norm_stats_path=norm_stats if norm_stats.is_file() else None,
 		label_cfg=label_cfg,
 		augment=False,
+		open_file_lru_size=open_file_lru_size,
 		root=ROOT,
 	)
 

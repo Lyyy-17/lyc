@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -154,6 +155,7 @@ class EddySegDataset(Dataset):
         norm_stats_path: str | Path | None = None,
         label_cfg: EddyLabelConfig | None = None,
         augment: bool = False,
+        open_file_lru_size: int = 8,
         root: Path | None = None,
     ):
         root = root or project_root()
@@ -161,6 +163,8 @@ class EddySegDataset(Dataset):
         self.augment = augment
         self._norm = load_norm_stats(Path(norm_stats_path)) if norm_stats_path else None
         self.label_cfg = label_cfg
+        self.open_file_lru_size = max(0, int(open_file_lru_size))
+        self._ds_cache: OrderedDict[Path, Any] = OrderedDict()
 
         if split is None:
             self.dir = Path(processed_dir or root / "data/processed/eddy_detection")
@@ -214,20 +218,52 @@ class EddySegDataset(Dataset):
             y = torch.rot90(y, k=k, dims=[-2, -1])
         return x, y
 
+    def _get_ds(self, path: Path) -> Any:
+        """按 LRU 策略复用打开的 NetCDF 句柄。"""
+
+        if self.open_file_lru_size <= 0:
+            return open_nc(path)
+
+        ds = self._ds_cache.get(path)
+        if ds is not None:
+            self._ds_cache.move_to_end(path)
+            return ds
+
+        ds = open_nc(path)
+        self._ds_cache[path] = ds
+        self._ds_cache.move_to_end(path)
+
+        while len(self._ds_cache) > self.open_file_lru_size:
+            _, old = self._ds_cache.popitem(last=False)
+            old.close()
+        return ds
+
+    def close(self) -> None:
+        for ds in self._ds_cache.values():
+            ds.close()
+        self._ds_cache.clear()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def __getitem__(self, idx: int) -> dict[str, Any]:
         sample = self.samples[idx]
         path = Path(sample["path"])
         t = int(sample["time_index"])
 
-        ds = open_nc(path)
-        try:
-            channels: list[torch.Tensor] = []
-            for v in self.var_names:
-                arr = np.asarray(ds[v].values[t], dtype=np.float32)
-                tv = standardize_tensor(torch.from_numpy(arr), v, self._norm)
-                channels.append(tv)
-            x = torch.stack(channels, dim=0)
-        finally:
+        ds = self._get_ds(path)
+        channels: list[torch.Tensor] = []
+        for v in self.var_names:
+            arr = np.asarray(ds[v].values[t], dtype=np.float32)
+            tv = standardize_tensor(torch.from_numpy(arr), v, self._norm)
+            channels.append(tv)
+        x = torch.stack(channels, dim=0)
+
+        # 禁用缓存时，保持原有按样本关闭行为
+        if self.open_file_lru_size <= 0:
             ds.close()
 
         y: torch.Tensor | None = None
