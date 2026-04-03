@@ -29,6 +29,10 @@ def element_forecasting_logic(model_path, data_path, start_idx):
     try:
         # 1. 设置本项目通用的高水平可视化画图默认风格
         apply_matplotlib_defaults()
+        
+        # 修复 Matplotlib 图片中的中文显示问题 (方块/乱码)
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'PingFang SC', 'Arial Unicode MS', 'sans-serif']
+        plt.rcParams['axes.unicode_minus'] = False
 
         # 2. 构建 Dataset 从 .nc 文件读取连续的步数
         dataset = ElementForecastWindowDataset(
