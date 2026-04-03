@@ -24,7 +24,7 @@
 ## 数据模式
 
 1. 单文件数据源
-   - 要素预测统一使用单个合并文件：data/processed/element_forecasting/all_clean_merged.nc。
+   - 要素预测统一使用单个合并文件，路径通过 `data/processed/element_forecasting/path.txt` 读取。
    - 旧的 manifest 多文件/跨文件拼接逻辑已移除。
 
 2. 滑窗采样

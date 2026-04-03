@@ -8,7 +8,7 @@
 
 示例：
   python scripts/test_element/check_element_forecast_competition.py \
-    --data-file data/processed/element_forecasting/all_clean_merged.nc \
+    --data-file data/processed/element_forecasting/path.txt \
     --split test --time-step-hours 1 --eval-horizon-hours 72
 """
 from __future__ import annotations

@@ -97,9 +97,16 @@ class ElementForecastWindowDataset(Dataset):
         self._open_ds_lru: OrderedDict[Path, Any] = OrderedDict()
         self._max_open_files = max(1, min(2, int(open_file_lru_size)))
 
-        self.path = Path(data_file or root / "data/processed/element_forecasting/all_clean_merged.nc")
+        self.path = Path(data_file or root / "data/processed/element_forecasting/path.txt")
         if not self.path.is_absolute():
             self.path = root / self.path
+            
+        if self.path.suffix == ".txt" and self.path.is_file():
+            actual_path_str = self.path.read_text(encoding="utf-8").strip()
+            self.path = Path(actual_path_str)
+            if not self.path.is_absolute():
+                self.path = root / self.path
+
         if not self.path.is_file():
             raise FileNotFoundError(f"dataset file not found: {self.path}")
 

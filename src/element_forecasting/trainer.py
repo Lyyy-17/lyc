@@ -160,7 +160,7 @@ def run_training(args: argparse.Namespace) -> None:
 	data_file = Path(
 		args.data_file
 		or train_cfg.get("data_file")
-		or data_cfg.get("paths", {}).get("processed", {}).get("element_forecasting", "data/processed/element_forecasting/all_clean_merged.nc")
+		or data_cfg.get("paths", {}).get("processed", {}).get("element_forecasting", "data/processed/element_forecasting/path.txt")
 	)
 	if not data_file.is_absolute():
 		data_file = root / data_file

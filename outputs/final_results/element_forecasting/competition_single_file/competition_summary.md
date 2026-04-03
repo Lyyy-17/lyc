@@ -2,15 +2,15 @@
 
 - Verdict: PASS
 - Horizon: 72.00 h (threshold >= 72.00 h)
-- Relative MSE: 0.1473% (threshold <= 15.0000%)
+- Relative MSE: 0.1199% (threshold <= 15.0000%)
 
 ## Metrics
 
-- MSE: 0.482233
-- RMSE: 0.694430
-- MAE: 0.326698
-- NSE: 0.997435
-- Relative MSE(%): 0.147269
+- MSE: 0.392642
+- RMSE: 0.626612
+- MAE: 0.298422
+- NSE: 0.997911
+- Relative MSE(%): 0.119909
 
 ## Files
 
