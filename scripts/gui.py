@@ -35,7 +35,7 @@ def load_dataset_info(data_path):
         dataset = ElementForecastWindowDataset(
             data_file=data_path,
             input_steps=24,
-            output_steps=24,
+            output_steps=72,
             split=None
         )
         
@@ -205,7 +205,7 @@ def element_forecasting_logic(model_path, data_path, start_idx):
     
     try:
         dataset = ElementForecastWindowDataset(
-            data_file=data_path, input_steps=24, output_steps=24, split=None
+            data_file=data_path, input_steps=24, output_steps=72, split=None
         )
 
         idx = int(start_idx)
@@ -218,7 +218,14 @@ def element_forecasting_logic(model_path, data_path, start_idx):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         predictor = ElementForecastPredictor(checkpoint_path=model_path, device=device)
 
-        result = predictor.predict(x_tensor, denormalize=True, return_cpu=True)
+        result = predictor.predict_long_horizon(
+            x=x_tensor, 
+            target_steps=72,
+            overlap_steps=4,
+            enable_overlap_blend=True,
+            denormalize=True, 
+            return_cpu=True
+        )
         pred_numpy = result["pred"][0].numpy()  # shape: (output_steps, Channels, H, W)
         var_names = result.get("var_names", ["SST", "SSS", "SSU", "SSV"])
 
