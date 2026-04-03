@@ -286,14 +286,16 @@ def _plot_sample_map(
     sample_mask: torch.Tensor,
     var_name: str,
     time_step_hours: float,
+    channel_idx: int = 0,
 ) -> None:
     import matplotlib.pyplot as plt
 
     apply_matplotlib_defaults()
 
-    pred = sample_pred[-1, 0].float().cpu().numpy()
-    target = sample_target[-1, 0].float().cpu().numpy()
-    mask = sample_mask[-1, 0].float().cpu().numpy() > 0.5
+    pred = sample_pred[-1, channel_idx].float().cpu().numpy()
+    target = sample_target[-1, channel_idx].float().cpu().numpy()
+    mask_c = channel_idx if sample_mask.shape[1] > channel_idx else 0
+    mask = sample_mask[-1, mask_c].float().cpu().numpy() > 0.5
 
     pred = np.where(mask, pred, np.nan)
     target = np.where(mask, target, np.nan)
@@ -513,11 +515,15 @@ def main() -> None:
     mask_total = 0.0
     target_sum_total = 0.0
     target_sq_total = 0.0
+    ss_res_total_std = 0.0
+    target_sq_total_std = 0.0
 
     ss_res_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
     abs_err_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
     mask_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
     target_sq_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
+    ss_res_h_std = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
+    target_sq_h_std = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
 
     sample_pred: torch.Tensor | None = None
     sample_target: torch.Tensor | None = None
@@ -550,11 +556,15 @@ def main() -> None:
             mask_total += float(torch.sum(mask).item())
             target_sum_total += float(torch.sum(target * mask).item())
             target_sq_total += float(torch.sum(target.pow(2) * mask).item())
+            target_sq_total_std += float(torch.sum(y_std.pow(2) * mask).item())
+            ss_res_total_std += float(torch.sum((pred_std - y_std).pow(2) * mask).item())
 
             ss_res_h += torch.sum(diff2 * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
             abs_err_h += torch.sum(absdiff * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
             mask_h += torch.sum(mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
             target_sq_h += torch.sum(target.pow(2) * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+            target_sq_h_std += torch.sum(y_std.pow(2) * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+            ss_res_h_std += torch.sum((pred_std - y_std).pow(2) * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
 
             total_samples += int(x.shape[0])
 
@@ -576,12 +586,12 @@ def main() -> None:
 
     ss_tot = target_sq_total - (target_sum_total * target_sum_total) / max(mask_total, eps)
     nse = 1.0 - (ss_res_total / max(ss_tot, eps))
-    rel_mse_pct = (ss_res_total / max(target_sq_total, eps)) * 100.0
+    rel_mse_pct = (ss_res_total_std / max(target_sq_total_std, eps)) * 100.0
 
     mse_h = (ss_res_h / torch.clamp_min(mask_h, eps)).cpu().numpy()
     rmse_h = np.sqrt(np.maximum(mse_h, 0.0))
     mae_h = (abs_err_h / torch.clamp_min(mask_h, eps)).cpu().numpy()
-    rel_mse_pct_h = ((ss_res_h / torch.clamp_min(target_sq_h, eps)) * 100.0).cpu().numpy()
+    rel_mse_pct_h = ((ss_res_h_std / torch.clamp_min(target_sq_h_std, eps)) * 100.0).cpu().numpy()
     horizon_hours_axis = (np.arange(eval_steps, dtype=np.float64) + 1.0) * float(args.time_step_hours)
 
     horizon_hours = float(eval_steps) * float(args.time_step_hours)
@@ -619,16 +629,20 @@ def main() -> None:
         )
         figure_files.append(str(fig3))
 
-        fig4 = figures_dir / "sample_last_horizon_map_var0.png"
-        _plot_sample_map(
-            fig4,
-            sample_pred=sample_pred,
-            sample_target=sample_target,
-            sample_mask=sample_mask,
-            var_name=(var_names[0] if len(var_names) > 0 else "var_0"),
-            time_step_hours=float(args.time_step_hours),
-        )
-        figure_files.append(str(fig4))
+        n_plot = max(1, min(int(args.max_plot_vars), len(var_names)))
+        for c in range(n_plot):
+            vname = var_names[c] if c < len(var_names) else f"var_{c}"
+            fig_map = figures_dir / f"sample_last_horizon_map_{vname}.png"
+            _plot_sample_map(
+                fig_map,
+                sample_pred=sample_pred,
+                sample_target=sample_target,
+                sample_mask=sample_mask,
+                var_name=vname,
+                time_step_hours=float(args.time_step_hours),
+                channel_idx=c,
+            )
+            figure_files.append(str(fig_map))
 
     report = {
         "task": "element_forecasting",
@@ -673,7 +687,7 @@ def main() -> None:
         },
         "notes": [
             "evaluation is single-file only and uses rolling autoregressive forecasting",
-            "relative_mse_percent = sum((pred-target)^2)/sum(target^2)*100 on valid mask",
+            "relative_mse_percent = sum((pred_std-y_std)^2)/sum(y_std^2)*100 on valid mask",
             "if time_step_hours is not 1, pass --time-step-hours explicitly",
         ],
     }

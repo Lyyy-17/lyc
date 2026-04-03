@@ -4,7 +4,6 @@ import torch
 import numpy as np
 import pandas as pd
 import xarray as xr
-import matplotlib.pyplot as plt
 
 try:
     import gradio as gr
@@ -12,12 +11,18 @@ except ImportError:
     print("Please install gradio: pip install gradio>=3.0")
     sys.exit(1)
 
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ImportError:
+    print("Please install plotly for frontend rendering: pip install plotly")
+    sys.exit(1)
+
 # 将 src 目录加入模块搜索路径，确保可以导入相关模块
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 from element_forecasting.predictor import ElementForecastPredictor
 from element_forecasting.dataset import ElementForecastWindowDataset
-from utils.visualization_defaults import apply_matplotlib_defaults
 
 def load_dataset_info(data_path):
     """
@@ -73,18 +78,19 @@ def extract_mask(mask_numpy, t_idx, c_idx, H, W):
     return mask_numpy # 备用兜底
 
 def draw_spatial_plot(pred_numpy, mask_numpy, var_names, step_idx):
-    fig, axs = plt.subplots(2, 2, figsize=(10, 8))
-    fig.patch.set_facecolor('white') # 确保背景是干净的纯白
-    axs = axs.flatten()
+    fig = make_subplots(
+        rows=2, cols=2, 
+        subplot_titles=[f"{v} (预测步: {step_idx+1}, +{(step_idx+1)*6}H)" for v in var_names[:4]],
+        vertical_spacing=0.1, horizontal_spacing=0.1
+    )
     
     # 获取指定步长的数据: [variable, H, W]
     step_pred = pred_numpy[step_idx]
     H, W = step_pred.shape[1], step_pred.shape[2]
         
     for i in range(min(4, step_pred.shape[0])):
-        ax = axs[i]
         var_name = var_names[i]
-        data_slice = step_pred[i].copy() # 拷贝以便修改
+        data_slice = step_pred[i].copy() 
         
         # 兼容性提取掩码片段
         mask_slice = extract_mask(mask_numpy, step_idx, i, H, W)
@@ -92,52 +98,65 @@ def draw_spatial_plot(pred_numpy, mask_numpy, var_names, step_idx):
             data_slice[mask_slice < 0.5] = np.nan
         
         if var_name in ["SST", "海温"]:
-            cmap_name = "coolwarm"
+            cmap_name = "RdBu_r"
         elif var_name in ["SSS", "盐度"]:
-            cmap_name = "viridis"
+            cmap_name = "Viridis"
         else:
             cmap_name = "RdBu_r"
             
-        cmap = plt.get_cmap(cmap_name).copy()
-        cmap.set_bad(color='#dddddd')
-        
         valid_data = data_slice[~np.isnan(data_slice)]
         if len(valid_data) > 0:
             vmin, vmax = np.percentile(valid_data, [1, 99])
         else:
             vmin, vmax = None, None
 
-        im = ax.imshow(
-            data_slice, 
-            cmap=cmap, 
-            origin="lower", 
-            interpolation="bilinear", 
-            vmin=vmin, 
-            vmax=vmax
+        row = (i // 2) + 1
+        col = (i % 2) + 1
+
+        hm = go.Heatmap(
+            z=data_slice,
+            colorscale=cmap_name,
+            zmin=vmin,
+            zmax=vmax,
+            showscale=True,
+            colorbar=dict(
+                thickness=15, 
+                len=0.45, 
+                y=0.75 if row==1 else 0.25, 
+                x=0.46 if col==1 else 1.0,
+                title=""
+            ),
+            hoverinfo="z+x+y" # 鼠标悬浮查看交互式具体数值
         )
+        fig.add_trace(hm, row=row, col=col)
         
-        # 将步长转化为大约的小时数 (假设 dt=6h，预报12步即 72h)
-        ax.set_title(f"{var_name} (预测步: {step_idx+1}, +{(step_idx+1)*6}H)", pad=10)
-        ax.grid(False)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    
-    plt.tight_layout()
+        # 隐藏坐标轴，防止图表撑破或坐标网格影响海表观测
+        fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, row=row, col=col)
+        # 固定缩放比例消除拉伸并且隐藏边框
+        fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, 
+                         scaleanchor=f"x{i+1}" if i>0 else "x", scaleratio=1, row=row, col=col)
+
+    fig.update_layout(
+        height=800, 
+        paper_bgcolor='white', 
+        plot_bgcolor='#dddddd', # 利用透明NaN与深灰背景实现陆地等掩码效果
+        margin=dict(l=20, r=20, t=60, b=20)
+    )
     return fig
 
 def draw_curve_plot(pred_numpy, mask_numpy, var_names):
     # 绘制随时间变化的区域平均曲线
-    fig, axs = plt.subplots(2, 2, figsize=(10, 6))
-    fig.patch.set_facecolor('white')
-    axs = axs.flatten()
+    fig = make_subplots(
+        rows=2, cols=2, 
+        subplot_titles=[f"{v} 预测期海区均值变化" for v in var_names[:4]],
+        horizontal_spacing=0.1, vertical_spacing=0.15
+    )
     
     num_steps = pred_numpy.shape[0]
     x_axis = np.arange(1, num_steps + 1) * 6  # 转换为小时
     H, W = pred_numpy.shape[2], pred_numpy.shape[3]
     
     for i in range(min(4, pred_numpy.shape[1])):
-        ax = axs[i]
         var_name = var_names[i]
         
         mean_vals = []
@@ -152,30 +171,37 @@ def draw_curve_plot(pred_numpy, mask_numpy, var_names):
                 
             mean_vals.append(np.mean(valid_data) if len(valid_data) > 0 else np.nan)
             
-        ax.plot(x_axis, mean_vals, marker='o', linestyle='-', linewidth=2, color='tab:blue')
-        ax.set_title(f"{var_name} 预测期海区均值变化", pad=10)
-        ax.set_xlabel("预报时间 (Hours)")
-        ax.set_ylabel(f"平均 {var_name}")
-        ax.grid(True, linestyle="--", alpha=0.6)
+        row = (i // 2) + 1
+        col = (i % 2) + 1
         
-    plt.tight_layout()
+        sc = go.Scatter(
+            x=x_axis,
+            y=mean_vals,
+            mode='lines+markers',
+            line=dict(width=2, color='royalblue'),
+            marker=dict(size=6),
+            name=var_name,
+            showlegend=False
+        )
+        fig.add_trace(sc, row=row, col=col)
+        
+        fig.update_xaxes(title_text="预报时间 (Hours)", showgrid=True, gridcolor='lightgray', row=row, col=col)
+        fig.update_yaxes(title_text=f"平均 {var_name}", showgrid=True, gridcolor='lightgray', row=row, col=col)
+        
+    fig.update_layout(height=600, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
 def element_forecasting_logic(model_path, data_path, start_idx):
     """
     执行推理的核心逻辑，计算所有步长，并返回状态（以供滑动条切换）以及默认初始视图。
     """
-    empty_fig = plt.figure()
+    empty_fig = go.Figure()
     if not os.path.exists(model_path):
         return None, f"Error: 模型路径 {model_path} 不存在", empty_fig, empty_fig
     if not os.path.exists(data_path):
         return None, f"Error: 数据路径 {data_path} 不存在", empty_fig, empty_fig
     
     try:
-        apply_matplotlib_defaults()
-        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'PingFang SC', 'Arial Unicode MS', 'sans-serif']
-        plt.rcParams['axes.unicode_minus'] = False
-
         dataset = ElementForecastWindowDataset(
             data_file=data_path, input_steps=12, output_steps=12, split=None
         )
@@ -214,11 +240,11 @@ def element_forecasting_logic(model_path, data_path, start_idx):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return None, f"Error: {str(e)}", empty_fig, empty_fig
+        return None, f"Error: {str(e)}", go.Figure(), go.Figure()
 
 def update_spatial_plot(state_dict, step_val):
     if not state_dict:
-        return plt.figure()
+        return go.Figure()
     
     pred_numpy = state_dict["pred"]
     mask_numpy = state_dict["mask"]
