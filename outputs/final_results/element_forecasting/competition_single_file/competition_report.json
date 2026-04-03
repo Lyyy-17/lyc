@@ -1,9 +1,9 @@
 {
   "task": "element_forecasting",
   "mode": "single_file",
-  "checkpoint": "/root/autodl-tmp/OceanRace/outputs/element_forecasting/checkpoints/hybrid_best.pt",
+  "checkpoint": "/OceanRace/outputs/element_forecasting/checkpoints/hybrid_best.pt",
   "dataset": {
-    "data_file": "/root/autodl-tmp/OceanRace/data/processed/element_forecasting/all_clean_merged.nc",
+    "data_file": "/OceanRace/data/processed/element_forecasting/path.txt",
     "split": "test",
     "total_windows": 47758,
     "selected_windows": 7165,
@@ -29,11 +29,11 @@
     "mse_percent_max": 15.0
   },
   "metrics": {
-    "mse": 0.39264247914015604,
-    "rmse": 0.6266119047226569,
-    "mae": 0.2984217125759507,
-    "nse": 0.9979112309221974,
-    "relative_mse_percent": 0.11990929883321452
+    "mse": 0.2858618525703653,
+    "rmse": 0.5346605021603572,
+    "mae": 0.26366410528834794,
+    "nse": 0.9984792796758009,
+    "relative_mse_percent": 0.08729950559587998
   },
   "pass": {
     "horizon": true,
@@ -41,12 +41,12 @@
     "overall": true
   },
   "artifacts": {
-    "per_horizon_csv": "/root/autodl-tmp/OceanRace/outputs/final_results/element_forecasting/competition_single_file/per_horizon_metrics.csv",
+    "per_horizon_csv": "/OceanRace/outputs/final_results/element_forecasting/competition_single_file/per_horizon_metrics.csv",
     "figures": [
-      "/root/autodl-tmp/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/horizon_metrics.png",
-      "/root/autodl-tmp/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/competition_threshold_comparison.png",
-      "/root/autodl-tmp/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/sample_timeseries_spatial_mean.png",
-      "/root/autodl-tmp/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/sample_last_horizon_map_var0.png"
+      "/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/horizon_metrics.png",
+      "/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/competition_threshold_comparison.png",
+      "/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/sample_timeseries_spatial_mean.png",
+      "/OceanRace/outputs/final_results/element_forecasting/competition_single_file/figures/sample_last_horizon_map_var0.png"
     ]
   },
   "notes": [

@@ -56,3 +56,10 @@
    - data_file, norm_stats_path
    - window_stride, train_ratio, val_ratio, test_ratio
    - epochs, batch_size, lr, num_workers, device, amp, grad_accum_steps
+
+## 评估指标 (Metrics)
+
+1. 大赛相对均方误差 (Relative MSE Percentage)
+   - 比赛门槛指标为：Relative MSE ≤ 15%。
+   - 在新版 `evaluator.py` 中增加了 `relative_mse_percent` 与 `masked_relative_mse_percent` 方法，对应大赛公式：`sum((pred-target)^2) / sum(target^2) * 100.0`。
+   - 因数据标准化导致 `sum(target^2)/N ≈ 1.0`，日常训练日志中输出的 `val_mse` (形如 `0.15`) 实际上等价于赛题中百分比格式的相对 MSE (`15%`)。
