@@ -1,2 +1,5 @@
-# 涡旋识别主模型超参数（待接入 src/eddy_detection）
-# 示例：backbone、输入通道、输出类别等
+# 涡旋识别模型配置（UNet baseline）
+name: unet_eddy
+in_channels: 3
+num_classes: 1
+base_channels: 32

@@ -1,2 +1,23 @@
-# 涡旋识别训练参数（待接入）
-# 示例：epochs、batch_size、lr、device、num_workers
+# 涡旋识别训练配置（最小可跑闭环）
+task_type: binary
+var_names: [adt, ugos, vgos]
+
+# 路径（相对项目根目录）
+processed_dir: data/processed/eddy_detection
+manifest_path: data/processed/splits/eddy.json
+norm_stats_path: data/processed/normalization/eddy_norm.json
+label_dir: data/processed/eddy_detection_labels
+
+# 训练超参数
+epochs: 1
+batch_size: 8
+num_workers: 0
+lr: 0.001
+dice_weight: 0.5
+device: auto
+augment: true
+seed: 42
+
+# 输出
+output_dir: outputs/eddy_detection
+save_name: unet_best.pt
