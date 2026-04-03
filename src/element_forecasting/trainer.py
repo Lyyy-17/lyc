@@ -14,7 +14,10 @@ from torch.utils.data import DataLoader
 
 from element_forecasting.dataset import ElementForecastWindowDataset
 from element_forecasting.evaluator import (
+	build_online_region_weights,
 	compute_regression_metrics_masked,
+	masked_edge_l1,
+	masked_gradient_l1,
 	masked_mse,
 	masked_spatial_mean_mse,
 	masked_weighted_mse,
@@ -273,8 +276,16 @@ def run_training(args: argparse.Namespace) -> None:
 		block_size=int(model_cfg.get("block_size", 4)),
 		dropout=float(model_cfg.get("dropout", 0.1)),
 		spatial_downsample=int(model_cfg.get("spatial_downsample", 4)),
+		multi_scale_enabled=bool(model_cfg.get("multi_scale_enabled", False)),
+		aux_spatial_downsample=int(model_cfg.get("aux_spatial_downsample", 8)),
+		multi_scale_fusion=str(model_cfg.get("multi_scale_fusion", "residual_add")),
+		multi_scale_aux_weight=float(model_cfg.get("multi_scale_aux_weight", 0.35)),
 		periodic_periods=model_cfg.get("periodic_periods", [24.0]),
 		periodic_harmonics=int(model_cfg.get("periodic_harmonics", 1)),
+		refine_head_enabled=bool(model_cfg.get("refine_head_enabled", False)),
+		refine_head_hidden_ratio=float(model_cfg.get("refine_head_hidden_ratio", 1.0)),
+		refine_head_num_layers=int(model_cfg.get("refine_head_num_layers", 2)),
+		refine_head_residual=bool(model_cfg.get("refine_head_residual", True)),
 	).to(device)
 
 	lr = float(args.lr or train_cfg.get("lr", 1e-4))
@@ -283,6 +294,15 @@ def run_training(args: argparse.Namespace) -> None:
 	loss_aux_transformer_weight = float(train_cfg.get("loss_aux_transformer_weight", 0.2))
 	loss_spatial_mean_weight = float(train_cfg.get("loss_spatial_mean_weight", 0.2))
 	loss_aux_spatial_mean_weight = float(train_cfg.get("loss_aux_spatial_mean_weight", 0.05))
+	loss_gradient_consistency_weight = float(train_cfg.get("loss_gradient_consistency_weight", 0.0))
+	loss_edge_weight = float(train_cfg.get("loss_edge_weight", 0.0))
+	edge_loss_type = str(train_cfg.get("edge_loss_type", "sobel"))
+	region_weighting_enabled = bool(train_cfg.get("region_weighting_enabled", False))
+	region_weight_base = float(train_cfg.get("region_weight_base", 1.0))
+	region_weight_strength = float(train_cfg.get("region_weight_strength", 1.0))
+	region_weight_quantile = float(train_cfg.get("region_weight_quantile", 0.8))
+	eval_extended_spatial_metrics = bool(train_cfg.get("eval_extended_spatial_metrics", True))
+	eval_edge_quantile = float(train_cfg.get("eval_edge_quantile", region_weight_quantile))
 	var_loss_weights_cfg = train_cfg.get("var_loss_weights", {})
 	if not isinstance(var_loss_weights_cfg, dict):
 		var_loss_weights_cfg = {}
@@ -326,11 +346,18 @@ def run_training(args: argparse.Namespace) -> None:
 		num_workers,
 	)
 	_log.debug(
-		"details | open_file_lru_size=%d | var_loss_weights=%s | loss_spatial_mean_weight=%.3f | loss_aux_spatial_mean_weight=%.3f | rollout_detach_between_steps=%s | ss_start_epoch=%d | progress_bar_enabled=%s mininterval=%.2f leave=%s",
+		"details | open_file_lru_size=%d | var_loss_weights=%s | loss_spatial_mean_weight=%.3f | loss_aux_spatial_mean_weight=%.3f | loss_gradient_consistency_weight=%.3f | loss_edge_weight=%.3f(%s) | region_weighting_enabled=%s(base=%.2f strength=%.2f q=%.2f) | rollout_detach_between_steps=%s | ss_start_epoch=%d | progress_bar_enabled=%s mininterval=%.2f leave=%s",
 		open_file_lru_size,
 		{v: float(var_loss_weights_cfg.get(v, 1.0)) for v in var_names},
 		loss_spatial_mean_weight,
 		loss_aux_spatial_mean_weight,
+		loss_gradient_consistency_weight,
+		loss_edge_weight,
+		edge_loss_type,
+		region_weighting_enabled,
+		region_weight_base,
+		region_weight_strength,
+		region_weight_quantile,
 		rollout_detach_between_steps,
 		ss_start_epoch,
 		progress_bar_enabled,
@@ -379,19 +406,46 @@ def run_training(args: argparse.Namespace) -> None:
 							t1 = t0 + model_output_steps
 							y_chunk = y[:, t0:t1]
 							y_valid_chunk = y_valid[:, t0:t1]
+							spatial_weights = None
+							if region_weighting_enabled:
+								spatial_weights = build_online_region_weights(
+									target=y_chunk,
+									mask=y_valid_chunk,
+									base_weight=region_weight_base,
+									strength=region_weight_strength,
+									quantile=region_weight_quantile,
+								)
 
 							out = model(cur_x)
 							pred = out["pred"]
 							pred_transformer = out["pred_transformer"]
-							loss_main = masked_weighted_mse(pred, y_chunk, y_valid_chunk, channel_weights=channel_weights)
-							loss_aux = masked_weighted_mse(pred_transformer, y_chunk, y_valid_chunk, channel_weights=channel_weights)
+							loss_main = masked_weighted_mse(
+								pred,
+								y_chunk,
+								y_valid_chunk,
+								channel_weights=channel_weights,
+								spatial_weights=spatial_weights,
+							)
+							loss_aux = masked_weighted_mse(
+								pred_transformer,
+								y_chunk,
+								y_valid_chunk,
+								channel_weights=channel_weights,
+								spatial_weights=spatial_weights,
+							)
 							loss_main_mean = masked_spatial_mean_mse(pred, y_chunk, y_valid_chunk, channel_weights=channel_weights)
 							loss_aux_mean = masked_spatial_mean_mse(pred_transformer, y_chunk, y_valid_chunk, channel_weights=channel_weights)
+							loss_grad = masked_gradient_l1(pred, y_chunk, y_valid_chunk)
+							loss_edge = pred.new_zeros((), dtype=pred.dtype)
+							if loss_edge_weight > 0.0:
+								loss_edge = masked_edge_l1(pred, y_chunk, y_valid_chunk, edge_type=edge_loss_type)
 							step_loss = (
 								loss_main_weight * loss_main
 								+ loss_aux_transformer_weight * loss_aux
 								+ loss_spatial_mean_weight * loss_main_mean
 								+ loss_aux_spatial_mean_weight * loss_aux_mean
+								+ loss_gradient_consistency_weight * loss_grad
+								+ loss_edge_weight * loss_edge
 							)
 							w = rollout_gamma ** rollout_idx
 							rollout_loss = rollout_loss + (w * step_loss)
@@ -445,7 +499,7 @@ def run_training(args: argparse.Namespace) -> None:
 		model.eval()
 		val_loss_sum = 0.0
 		val_count = 0
-		val_metrics_sum = {"mse": 0.0, "mae": 0.0, "nse": 0.0}
+		val_metrics_sum: dict[str, float] = {}
 
 		with torch.no_grad():
 			for batch in val_loader:
@@ -459,9 +513,16 @@ def run_training(args: argparse.Namespace) -> None:
 				val_count += bs
 
 				# 逐批次计算并累加，防止全部 concat 导致 OOM
-				batch_metrics = compute_regression_metrics_masked(pred, y, y_valid)
-				for k in val_metrics_sum:
-					val_metrics_sum[k] += batch_metrics[k] * bs
+				batch_metrics = compute_regression_metrics_masked(pred, y, y_valid, edge_quantile=eval_edge_quantile)
+				if not eval_extended_spatial_metrics:
+					batch_metrics = {
+						"mse": batch_metrics["mse"],
+						"rmse": batch_metrics["rmse"],
+						"mae": batch_metrics["mae"],
+						"nse": batch_metrics["nse"],
+					}
+				for k, v in batch_metrics.items():
+					val_metrics_sum[k] = val_metrics_sum.get(k, 0.0) + (v * bs)
 
 		val_loss = val_loss_sum / max(val_count, 1)
 		metrics = {k: v / max(val_count, 1) for k, v in val_metrics_sum.items()}
@@ -476,9 +537,18 @@ def run_training(args: argparse.Namespace) -> None:
 			"val_mae": float(metrics["mae"]),
 			"val_nse": float(metrics["nse"]),
 		}
+		if "grad_rmse" in metrics:
+			epoch_record["val_grad_rmse"] = float(metrics["grad_rmse"])
+		if "extreme_error" in metrics:
+			epoch_record["val_extreme_error"] = float(metrics["extreme_error"])
+		if "edge_rmse" in metrics:
+			epoch_record["val_edge_rmse"] = float(metrics["edge_rmse"])
 		history.append(epoch_record)
-		_log.info(
-			"epoch=%d train_loss=%.6f val_loss=%.6f val_rmse=%.6f val_mae=%.6f val_nse=%.6f ss_epsilon=%.4f",
+		log_msg = (
+			"epoch=%d train_loss=%.6f val_loss=%.6f val_rmse=%.6f val_mae=%.6f "
+			"val_nse=%.6f ss_epsilon=%.4f"
+		)
+		log_args: list[float | int] = [
 			epoch,
 			train_loss,
 			val_loss,
@@ -486,7 +556,17 @@ def run_training(args: argparse.Namespace) -> None:
 			metrics["mae"],
 			metrics["nse"],
 			epsilon,
-		)
+		]
+		if "grad_rmse" in metrics:
+			log_msg += " val_grad_rmse=%.6f"
+			log_args.append(metrics["grad_rmse"])
+		if "edge_rmse" in metrics:
+			log_msg += " val_edge_rmse=%.6f"
+			log_args.append(metrics["edge_rmse"])
+		if "extreme_error" in metrics:
+			log_msg += " val_extreme_error=%.6f"
+			log_args.append(metrics["extreme_error"])
+		_log.info(log_msg, *log_args)
 
 		if val_loss < best_val:
 			best_val = val_loss

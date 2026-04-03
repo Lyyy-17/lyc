@@ -6,6 +6,41 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class DepthwiseSeparableRefineHead(nn.Module):
+	"""轻量空间细化头：使用 depthwise + pointwise 结构恢复局地细节。"""
+
+	def __init__(
+		self,
+		channels: int,
+		num_layers: int = 2,
+		hidden_ratio: float = 1.0,
+		residual: bool = True,
+	) -> None:
+		super().__init__()
+		self.residual = residual
+		num_layers = max(1, int(num_layers))
+		hidden_channels = max(1, int(round(channels * float(hidden_ratio))))
+		blocks: list[nn.Module] = []
+		for _ in range(num_layers):
+			blocks.append(
+				nn.Sequential(
+					nn.Conv2d(channels, channels, kernel_size=3, padding=1, groups=channels, bias=False),
+					nn.GELU(),
+					nn.Conv2d(channels, hidden_channels, kernel_size=1, bias=True),
+					nn.GELU(),
+					nn.Conv2d(hidden_channels, channels, kernel_size=1, bias=True),
+				)
+			)
+		self.blocks = nn.ModuleList(blocks)
+
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		out = x
+		for block in self.blocks:
+			delta = block(out)
+			out = out + delta if self.residual else delta
+		return out
+
+
 class RMSNorm(nn.Module):
 	"""轻量 RMSNorm，用于稳定 block-level attention 聚合。"""
 
@@ -117,14 +152,26 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		block_size: int = 4,
 		dropout: float = 0.1,
 		spatial_downsample: int = 4,
+		multi_scale_enabled: bool = False,
+		aux_spatial_downsample: int = 8,
+		multi_scale_fusion: str = "residual_add",
+		multi_scale_aux_weight: float = 0.35,
 		periodic_periods: tuple[float, ...] | list[float] | None = None,
 		periodic_harmonics: int = 1,
+		refine_head_enabled: bool = False,
+		refine_head_hidden_ratio: float = 1.0,
+		refine_head_num_layers: int = 2,
+		refine_head_residual: bool = True,
 	) -> None:
 		super().__init__()
 		self.in_channels = in_channels
 		self.input_steps = input_steps
 		self.output_steps = output_steps
 		self.patch_size = max(1, int(spatial_downsample))
+		self.multi_scale_enabled = bool(multi_scale_enabled)
+		self.aux_patch_size = max(1, int(aux_spatial_downsample))
+		self.multi_scale_fusion = str(multi_scale_fusion).strip().lower()
+		self.multi_scale_aux_weight = float(multi_scale_aux_weight)
 		if periodic_periods is None:
 			periodic_periods = (24.0,)
 		periods = [float(p) for p in periodic_periods if float(p) > 0]
@@ -138,6 +185,14 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		self.patch_embed = nn.Conv2d(
 			in_channels, d_model, kernel_size=self.patch_size, stride=self.patch_size
 		)
+		self.patch_embed_aux = None
+		if self.multi_scale_enabled:
+			self.patch_embed_aux = nn.Conv2d(
+				in_channels,
+				d_model,
+				kernel_size=self.aux_patch_size,
+				stride=self.aux_patch_size,
+			)
 		
 		# 预设最大网格数量
 		self.max_spatial_tokens = 32768
@@ -163,6 +218,14 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		)
 
 		self.out_proj = nn.Linear(d_model, output_steps * in_channels * self.patch_size * self.patch_size)
+		self.refine_head = None
+		if bool(refine_head_enabled):
+			self.refine_head = DepthwiseSeparableRefineHead(
+				channels=in_channels,
+				num_layers=refine_head_num_layers,
+				hidden_ratio=refine_head_hidden_ratio,
+				residual=refine_head_residual,
+			)
 
 	def _build_periodic_time_features(self, abs_time: torch.Tensor) -> torch.Tensor:
 		"""Build multi-period harmonic features with shape (B, T, 2 * periods * harmonics)."""
@@ -188,6 +251,14 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		# 1. Patch Embedding & 空间 Transformer
 		x_reshaped = x.reshape(bsz * t_in, ch, h, w)
 		patches = self.patch_embed(x_reshaped)
+		if self.multi_scale_enabled and self.patch_embed_aux is not None:
+			aux_patches = self.patch_embed_aux(x_reshaped)
+			if aux_patches.shape[-2:] != patches.shape[-2:]:
+				aux_patches = F.interpolate(aux_patches, size=patches.shape[-2:], mode="bilinear", align_corners=False)
+			if self.multi_scale_fusion == "residual_add":
+				patches = patches + (self.multi_scale_aux_weight * aux_patches)
+			else:
+				patches = 0.5 * patches + 0.5 * aux_patches
 		_, d, h_r, w_r = patches.shape
 		num_spatial_tokens = h_r * w_r
 		
@@ -220,6 +291,11 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		if pred.shape[-2:] != (h, w):
 			pred = F.interpolate(pred.flatten(0,1), size=(h, w), mode="bilinear", align_corners=False)
 			pred = pred.view(bsz, self.output_steps, ch, h, w)
+
+		if self.refine_head is not None:
+			pred_2d = pred.flatten(0, 1)
+			pred_2d = self.refine_head(pred_2d)
+			pred = pred_2d.view(bsz, self.output_steps, ch, h, w)
 			
 		return pred
 
@@ -238,8 +314,16 @@ class HybridElementForecastModel(nn.Module):
 		block_size: int = 4,
 		dropout: float = 0.1,
 		spatial_downsample: int = 4,
+		multi_scale_enabled: bool = False,
+		aux_spatial_downsample: int = 8,
+		multi_scale_fusion: str = "residual_add",
+		multi_scale_aux_weight: float = 0.35,
 		periodic_periods: tuple[float, ...] | list[float] | None = None,
 		periodic_harmonics: int = 1,
+		refine_head_enabled: bool = False,
+		refine_head_hidden_ratio: float = 1.0,
+		refine_head_num_layers: int = 2,
+		refine_head_residual: bool = True,
 	) -> None:
 		super().__init__()
 		self.output_steps = output_steps
@@ -253,8 +337,16 @@ class HybridElementForecastModel(nn.Module):
 			block_size=block_size,
 			dropout=dropout,
 			spatial_downsample=spatial_downsample,
+			multi_scale_enabled=multi_scale_enabled,
+			aux_spatial_downsample=aux_spatial_downsample,
+			multi_scale_fusion=multi_scale_fusion,
+			multi_scale_aux_weight=multi_scale_aux_weight,
 			periodic_periods=periodic_periods,
 			periodic_harmonics=periodic_harmonics,
+			refine_head_enabled=refine_head_enabled,
+			refine_head_hidden_ratio=refine_head_hidden_ratio,
+			refine_head_num_layers=refine_head_num_layers,
+			refine_head_residual=refine_head_residual,
 		)
 
 	def forward(self, x: torch.Tensor, t0: torch.Tensor | None = None) -> dict[str, torch.Tensor]:

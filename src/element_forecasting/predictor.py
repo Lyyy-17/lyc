@@ -37,8 +37,16 @@ class ElementForecastPredictor:
 			block_size=int(model_cfg.get("block_size", 4)),
 			dropout=float(model_cfg.get("dropout", 0.1)),
 			spatial_downsample=int(model_cfg.get("spatial_downsample", 4)),
+			multi_scale_enabled=bool(model_cfg.get("multi_scale_enabled", False)),
+			aux_spatial_downsample=int(model_cfg.get("aux_spatial_downsample", 8)),
+			multi_scale_fusion=str(model_cfg.get("multi_scale_fusion", "residual_add")),
+			multi_scale_aux_weight=float(model_cfg.get("multi_scale_aux_weight", 0.35)),
 			periodic_periods=model_cfg.get("periodic_periods", [24.0]),
 			periodic_harmonics=int(model_cfg.get("periodic_harmonics", 1)),
+			refine_head_enabled=bool(model_cfg.get("refine_head_enabled", False)),
+			refine_head_hidden_ratio=float(model_cfg.get("refine_head_hidden_ratio", 1.0)),
+			refine_head_num_layers=int(model_cfg.get("refine_head_num_layers", 2)),
+			refine_head_residual=bool(model_cfg.get("refine_head_residual", True)),
 		)
 		self.model.load_state_dict(ckpt["model_state"])
 		self.model.to(self.device)
