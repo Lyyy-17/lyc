@@ -28,13 +28,17 @@ def load_dataset_info(data_path):
     """
     加载 .nc 文件，提取总有效切片数，更新 Slider 范围并展示首尾真实时间供用户参考，避免渲染几万个选项导致浏览器卡死。
     """
-    if not os.path.exists(data_path):
+    if data_path is None:
+        return gr.update(interactive=False), "错误：请选择数据文件"
+    
+    real_path = data_path.name if hasattr(data_path, 'name') else data_path
+    if not os.path.exists(real_path):
         return gr.update(interactive=False), "错误：未找到数据文件"
         
     try:
         norm_path = "data/processed/normalization/element_forecasting_norm.json"
         dataset = ElementForecastWindowDataset(
-            data_file=data_path,
+            data_file=data_path.name if hasattr(data_path, 'name') else data_path,
             input_steps=24,
             output_steps=72,
             split=None,
@@ -44,7 +48,8 @@ def load_dataset_info(data_path):
         if len(dataset) == 0:
             return gr.update(interactive=False), "错误：数据集为空或步长不足"
             
-        ds = xr.open_dataset(data_path)
+        real_path = data_path.name if hasattr(data_path, 'name') else data_path
+        ds = xr.open_dataset(real_path)
         times = pd.to_datetime(ds['time'].values)
         
         first_time = times[dataset._windows[0]].strftime("%Y-%m-%d %H:%M:%S")
@@ -99,18 +104,22 @@ def draw_spatial_plot(pred_numpy, mask_numpy, var_names, step_idx):
         if mask_slice is not None and mask_slice.shape == (H, W):
             data_slice[mask_slice < 0.5] = np.nan
         
-        if var_name in ["SST", "海温"]:
-            cmap_name = "RdBu_r"
-        elif var_name in ["SSS", "盐度"]:
+        var_upper = var_name.upper()
+        if var_upper in ["SSS", "盐度"]:
             cmap_name = "Viridis"
         else:
             cmap_name = "RdBu_r"
             
         valid_data = data_slice[~np.isnan(data_slice)]
         if len(valid_data) > 0:
-            vmin, vmax = np.percentile(valid_data, [1, 99])
+            vmin = float(np.min(valid_data))
+            vmax = float(np.max(valid_data))
+            # 针对经向和纬向流速等含有正负方向的向量，采取原点(0)严格对称的极限区间策略
+            if var_upper in ["SSU", "SSV"]:
+                limit = max(abs(vmin), abs(vmax))
+                vmin, vmax = -limit, limit
         else:
-            vmin, vmax = None, None
+            vmin, vmax = -1.0, 1.0
 
         row = (i // 2) + 1
         col = (i % 2) + 1
@@ -195,20 +204,26 @@ def draw_curve_plot(pred_numpy, mask_numpy, var_names):
     fig.update_layout(height=600, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
-def element_forecasting_logic(model_path, data_path, start_idx):
+def element_forecasting_logic(data_path, start_idx):
     """
     执行推理的核心逻辑，计算所有步长，并返回状态（以供滑动条切换）以及默认初始视图。
     """
+    model_path = "models/forecast_model.pt"
     empty_fig = go.Figure()
     if not os.path.exists(model_path):
         return None, f"Error: 模型路径 {model_path} 不存在", empty_fig, empty_fig
-    if not os.path.exists(data_path):
-        return None, f"Error: 数据路径 {data_path} 不存在", empty_fig, empty_fig
+        
+    if data_path is None:
+        return None, "Error: 请先选择数据文件", empty_fig, empty_fig
+    
+    real_path = data_path.name if hasattr(data_path, 'name') else data_path
+    if not os.path.exists(real_path):
+        return None, f"Error: 数据路径 {real_path} 不存在", empty_fig, empty_fig
     
     try:
         norm_path = "data/processed/normalization/element_forecasting_norm.json"
         dataset = ElementForecastWindowDataset(
-            data_file=data_path, 
+            data_file=real_path, 
             input_steps=24, 
             output_steps=72, 
             split=None,
@@ -278,12 +293,12 @@ def create_gui():
             with gr.Column():
                 with gr.Row():
                     with gr.Column(scale=1):
-                        model_input = gr.Textbox(value="outputs/element_forecasting/checkpoints/hybrid_best.pt", label="模型路径 (Checkpoint)")
+                        gr.Markdown("**模型路径:** 强制采用相对模型 `models/forecast_model.pt`")
                         with gr.Row():
-                            data_input = gr.Textbox(value="data/processed/element_forecasting/示例数据.nc", label="测试输入数据序列路径 (.nc)")
-                            load_btn = gr.Button("加载数据信息", size="sm")
+                            data_input = gr.File(label="上传或选择测试数据 (NetCDF / .nc)", file_types=[".nc"])
+                            load_btn = gr.Button("解析可预测时间窗", size="sm")
                         
-                        time_idx_input = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="拉动选择时间序列起点 (Index)", interactive=False)
+                        time_idx_input = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="拖拽选择预测起点的时间切片索引", interactive=False)
                         dataset_info = gr.Textbox(label="起点真实时间跨度参考", interactive=False, lines=3)
                         predict_btn = gr.Button("生成预测", variant="primary")
                         status_output = gr.Textbox(label="运行状态", interactive=False)
@@ -309,7 +324,7 @@ def create_gui():
             # 主生成逻辑，产生 state 和第一张图及趋势图
             predict_btn.click(
                 fn=element_forecasting_logic,
-                inputs=[model_input, data_input, time_idx_input],
+                inputs=[data_input, time_idx_input],
                 outputs=[prediction_state, status_output, plot_output, curve_plot]
             )
             
