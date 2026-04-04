@@ -127,6 +127,153 @@ def _mix_rollout_input(
 	return gate * target_chunk + (1.0 - gate) * pred_chunk
 
 
+def _rollout_predict_with_overlap(
+	*,
+	model: nn.Module,
+	x: torch.Tensor,
+	input_steps: int,
+	target_steps: int,
+	chunk_steps: int,
+	overlap_steps: int,
+	enable_overlap_blend: bool,
+) -> torch.Tensor:
+	"""按推理器同款逻辑执行滚动预测，并在重叠区做线性融合。"""
+	if target_steps <= 0:
+		raise ValueError("target_steps must be > 0")
+	if chunk_steps <= 0:
+		raise ValueError("chunk_steps must be > 0")
+
+	overlap = int(max(0, overlap_steps if enable_overlap_blend else 0))
+	if overlap >= chunk_steps:
+		overlap = max(0, chunk_steps - 1)
+	stride = max(1, chunk_steps - overlap)
+
+	cur_x = x
+	out_seq: torch.Tensor | None = None
+	cursor_start = 0
+
+	while out_seq is None or out_seq.shape[1] < target_steps:
+		pred_chunk = model(cur_x)["pred"].float()
+
+		if out_seq is None:
+			out_seq = pred_chunk
+		else:
+			overlap_len = max(0, out_seq.shape[1] - cursor_start)
+			overlap_len = min(overlap_len, pred_chunk.shape[1])
+			if overlap_len > 0:
+				if enable_overlap_blend:
+					alpha = torch.linspace(0.0, 1.0, steps=overlap_len, device=pred_chunk.device)
+					alpha = alpha.view(1, overlap_len, 1, 1, 1)
+					old = out_seq[:, cursor_start:cursor_start + overlap_len]
+					new = pred_chunk[:, :overlap_len]
+					out_seq[:, cursor_start:cursor_start + overlap_len] = old * (1.0 - alpha) + new * alpha
+				else:
+					out_seq[:, cursor_start:cursor_start + overlap_len] = pred_chunk[:, :overlap_len]
+
+			tail = pred_chunk[:, overlap_len:]
+			if tail.shape[1] > 0:
+				out_seq = torch.cat([out_seq, tail], dim=1)
+
+		feed_steps = min(stride, pred_chunk.shape[1])
+		feed = pred_chunk[:, :feed_steps]
+		cur_x = torch.cat([cur_x.float(), feed], dim=1)[:, -input_steps:].contiguous()
+		cursor_start += stride
+
+	assert out_seq is not None
+	return out_seq[:, :target_steps]
+
+
+def _rollout_composite_train_style_loss(
+	*,
+	model: nn.Module,
+	x: torch.Tensor,
+	y: torch.Tensor,
+	y_valid: torch.Tensor,
+	chunk_steps: int,
+	rollout_gamma: float,
+	channel_weights: torch.Tensor,
+	region_weighting_enabled: bool,
+	region_weight_base: float,
+	region_weight_strength: float,
+	region_weight_quantile: float,
+	loss_main_weight: float,
+	loss_aux_transformer_weight: float,
+	loss_spatial_mean_weight: float,
+	loss_aux_spatial_mean_weight: float,
+	loss_gradient_consistency_weight: float,
+	loss_edge_weight: float,
+	edge_loss_type: str,
+	input_steps: int,
+) -> torch.Tensor:
+	"""验证阶段使用与训练一致的 rollout 组合损失。"""
+	cur_x = x
+	total_steps = int(y.shape[1])
+	rollout_loss = x.new_zeros((), dtype=torch.float32)
+	weight_sum = 0.0
+	rollout_count = max(1, (total_steps + max(1, chunk_steps) - 1) // max(1, chunk_steps))
+
+	for rollout_idx in range(rollout_count):
+		t0 = rollout_idx * chunk_steps
+		if t0 >= total_steps:
+			break
+		t1 = min(t0 + chunk_steps, total_steps)
+		y_chunk = y[:, t0:t1]
+		y_valid_chunk = y_valid[:, t0:t1]
+
+		spatial_weights = None
+		if region_weighting_enabled:
+			spatial_weights = build_online_region_weights(
+				target=y_chunk,
+				mask=y_valid_chunk,
+				base_weight=region_weight_base,
+				strength=region_weight_strength,
+				quantile=region_weight_quantile,
+			)
+
+		out = model(cur_x)
+		pred = out["pred"][:, : y_chunk.shape[1]]
+		pred_transformer = out["pred_transformer"][:, : y_chunk.shape[1]]
+
+		loss_main = masked_weighted_mse(
+			pred,
+			y_chunk,
+			y_valid_chunk,
+			channel_weights=channel_weights,
+			spatial_weights=spatial_weights,
+		)
+		loss_aux = masked_weighted_mse(
+			pred_transformer,
+			y_chunk,
+			y_valid_chunk,
+			channel_weights=channel_weights,
+			spatial_weights=spatial_weights,
+		)
+		loss_main_mean = masked_spatial_mean_mse(pred, y_chunk, y_valid_chunk, channel_weights=channel_weights)
+		loss_aux_mean = masked_spatial_mean_mse(pred_transformer, y_chunk, y_valid_chunk, channel_weights=channel_weights)
+		loss_grad = masked_gradient_l1(pred, y_chunk, y_valid_chunk)
+		loss_edge = pred.new_zeros((), dtype=pred.dtype)
+		if loss_edge_weight > 0.0:
+			loss_edge = masked_edge_l1(pred, y_chunk, y_valid_chunk, edge_type=edge_loss_type)
+
+		step_loss = (
+			loss_main_weight * loss_main
+			+ loss_aux_transformer_weight * loss_aux
+			+ loss_spatial_mean_weight * loss_main_mean
+			+ loss_aux_spatial_mean_weight * loss_aux_mean
+			+ loss_gradient_consistency_weight * loss_grad
+			+ loss_edge_weight * loss_edge
+		)
+		w = rollout_gamma ** rollout_idx
+		rollout_loss = rollout_loss + (w * step_loss)
+		weight_sum += w
+
+		if t1 < total_steps:
+			feed = pred[:, : min(chunk_steps, pred.shape[1])]
+			cur_x = torch.cat([cur_x.float(), feed], dim=1)[:, -input_steps:].contiguous()
+
+	return rollout_loss / max(weight_sum, 1e-12)
+
+
 def run_training(args: argparse.Namespace) -> None:
 	root = Path(__file__).resolve().parents[2]
 	data_cfg = _load_yaml(args.data_config)
@@ -152,7 +299,11 @@ def run_training(args: argparse.Namespace) -> None:
 	model_output_steps = core["output_steps"]
 	rollout_steps = max(1, int(train_cfg.get("rollout_steps", 1)))
 	train_target_steps = int(model_output_steps * rollout_steps)
+	val_target_steps = int(train_cfg.get("val_target_steps", train_target_steps))
+	val_target_steps = max(model_output_steps, val_target_steps)
 	window_stride = core["window_stride"]
+	split_mode = str(train_cfg.get("split_mode", "competition_years")).strip().lower()
+	split_years = train_cfg.get("split_years", None)
 	open_file_lru_size = int(train_cfg.get("open_file_lru_size", train_cfg.get("dataset_cache_max_files", 16)))
 	open_file_lru_size = max(1, open_file_lru_size)
 	split_cfg = data_cfg.get("split", {})
@@ -198,6 +349,8 @@ def run_training(args: argparse.Namespace) -> None:
 		window_stride=window_stride,
 		open_file_lru_size=open_file_lru_size,
 		split="train",
+		split_mode=split_mode,
+		split_years=split_years,
 		split_ratios=(train_ratio, val_ratio, test_ratio),
 		norm_stats_path=norm_path,
 		root=root,
@@ -206,10 +359,12 @@ def run_training(args: argparse.Namespace) -> None:
 		data_file=data_file,
 		var_names=var_names,
 		input_steps=input_steps,
-		output_steps=model_output_steps,
+		output_steps=val_target_steps,
 		window_stride=window_stride,
 		open_file_lru_size=open_file_lru_size,
 		split="val",
+		split_mode=split_mode,
+		split_years=split_years,
 		split_ratios=(train_ratio, val_ratio, test_ratio),
 		norm_stats_path=norm_path,
 		root=root,
@@ -229,6 +384,8 @@ def run_training(args: argparse.Namespace) -> None:
 		torch.set_float32_matmul_precision("high")
 	rollout_gamma = float(train_cfg.get("rollout_gamma", 1.0))
 	rollout_gamma = max(0.0, min(1.0, rollout_gamma))
+	val_overlap_blend_enabled = bool(train_cfg.get("overlap_blend_enabled", True))
+	val_overlap_steps = int(train_cfg.get("overlap_steps", 4))
 	rollout_detach_between_steps = bool(train_cfg.get("rollout_detach_between_steps", False))
 	ss_enabled = bool(train_cfg.get("scheduled_sampling_enabled", False))
 	ss_start_epoch = max(1, int(train_cfg.get("scheduled_sampling_start_epoch", 1)))
@@ -318,27 +475,33 @@ def run_training(args: argparse.Namespace) -> None:
 	scaler = torch.amp.GradScaler(amp_device_type, enabled=amp_enabled)
 
 	best_val = float("inf")
+	best_val_nrmse_percent = float("inf")
 	best_path = ckpt_dir / "hybrid_best.pt"
 	history: list[dict[str, float]] = []
 
 	_log.info(
-		"start training | vars=%s | in/out=%d/%d | rollout=%d(gamma=%.2f) | ss=%s(eps %.2f->%.2f) | amp=%s",
+		"start training | vars=%s | split_mode=%s | in/out=%d/%d | rollout=%d(gamma=%.2f) | val_target_steps=%d | overlap_blend=%s/%d | ss=%s(eps %.2f->%.2f) | amp=%s",
 		list(var_names),
+		split_mode,
 		input_steps,
 		model_output_steps,
 		rollout_steps,
 		rollout_gamma,
+		val_target_steps,
+		val_overlap_blend_enabled,
+		val_overlap_steps,
 		ss_enabled,
 		ss_epsilon_start,
 		ss_epsilon_min,
 		amp_enabled,
 	)
 	_log.info(
-		"data=%s | split=(%.2f,%.2f,%.2f) | windows train/val=%d/%d | batch=%d accum=%d workers=%d",
+		"data=%s | split=(%.2f,%.2f,%.2f) | split_years=%s | windows train/val=%d/%d | batch=%d accum=%d workers=%d",
 		str(data_file),
 		train_ratio,
 		val_ratio,
 		test_ratio,
+		str(split_years),
 		len(train_ds),
 		len(val_ds),
 		batch_size,
@@ -506,8 +669,36 @@ def run_training(args: argparse.Namespace) -> None:
 				x = batch["x"].to(device)
 				y = batch["y"].to(device)
 				y_valid = batch["y_valid"].to(device)
-				pred = model(x)["pred"]
-				loss = masked_mse(pred, y, y_valid)
+				loss = _rollout_composite_train_style_loss(
+					model=model,
+					x=x,
+					y=y,
+					y_valid=y_valid,
+					chunk_steps=model_output_steps,
+					rollout_gamma=rollout_gamma,
+					channel_weights=channel_weights,
+					region_weighting_enabled=region_weighting_enabled,
+					region_weight_base=region_weight_base,
+					region_weight_strength=region_weight_strength,
+					region_weight_quantile=region_weight_quantile,
+					loss_main_weight=loss_main_weight,
+					loss_aux_transformer_weight=loss_aux_transformer_weight,
+					loss_spatial_mean_weight=loss_spatial_mean_weight,
+					loss_aux_spatial_mean_weight=loss_aux_spatial_mean_weight,
+					loss_gradient_consistency_weight=loss_gradient_consistency_weight,
+					loss_edge_weight=loss_edge_weight,
+					edge_loss_type=edge_loss_type,
+					input_steps=input_steps,
+				)
+				pred = _rollout_predict_with_overlap(
+					model=model,
+					x=x,
+					input_steps=input_steps,
+					target_steps=int(y.shape[1]),
+					chunk_steps=model_output_steps,
+					overlap_steps=val_overlap_steps,
+					enable_overlap_blend=val_overlap_blend_enabled,
+				)
 				bs = x.size(0)
 				val_loss_sum += float(loss.item()) * bs
 				val_count += bs
@@ -518,6 +709,7 @@ def run_training(args: argparse.Namespace) -> None:
 					batch_metrics = {
 						"mse": batch_metrics["mse"],
 						"rmse": batch_metrics["rmse"],
+						"nrmse_percent": batch_metrics["nrmse_percent"],
 						"mae": batch_metrics["mae"],
 						"nse": batch_metrics["nse"],
 					}
@@ -534,6 +726,7 @@ def run_training(args: argparse.Namespace) -> None:
 			"val_loss": float(val_loss),
 			"val_mse": float(metrics["mse"]),
 			"val_rmse": float(metrics["rmse"]),
+			"val_nrmse_percent": float(metrics["nrmse_percent"]),
 			"val_mae": float(metrics["mae"]),
 			"val_nse": float(metrics["nse"]),
 		}
@@ -546,7 +739,7 @@ def run_training(args: argparse.Namespace) -> None:
 		history.append(epoch_record)
 		log_msg = (
 			"epoch=%d train_loss=%.6f val_loss=%.6f val_rmse=%.6f val_mae=%.6f "
-			"val_nse=%.6f ss_epsilon=%.4f"
+			"val_nse=%.6f val_nrmse=%.4f%% ss_epsilon=%.4f"
 		)
 		log_args: list[float | int] = [
 			epoch,
@@ -555,6 +748,7 @@ def run_training(args: argparse.Namespace) -> None:
 			metrics["rmse"],
 			metrics["mae"],
 			metrics["nse"],
+			metrics["nrmse_percent"],
 			epsilon,
 		]
 		if "grad_rmse" in metrics:
@@ -570,6 +764,9 @@ def run_training(args: argparse.Namespace) -> None:
 
 		if val_loss < best_val:
 			best_val = val_loss
+
+		if metrics["nrmse_percent"] < best_val_nrmse_percent:
+			best_val_nrmse_percent = float(metrics["nrmse_percent"])
 			torch.save(
 				{
 					"model_state": model.state_dict(),
@@ -581,13 +778,18 @@ def run_training(args: argparse.Namespace) -> None:
 				},
 				best_path,
 			)
-			_log.info("new best checkpoint saved: %s", best_path)
+			_log.info("new best checkpoint saved by nrmse_percent=%.4f%%: %s", best_val_nrmse_percent, best_path)
 
 	(metrics_dir / "train_history.json").write_text(
 		json.dumps(history, ensure_ascii=False, indent=2),
 		encoding="utf-8",
 	)
-	_log.info("training done | best_val=%.6f | checkpoint=%s", best_val, best_path)
+	_log.info(
+		"training done | best_val_loss=%.6f | best_val_nrmse_percent=%.4f%% | checkpoint=%s",
+		best_val,
+		best_val_nrmse_percent,
+		best_path,
+	)
 
 
 def main() -> None:

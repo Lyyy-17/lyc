@@ -53,6 +53,32 @@ def _sanitize_values(values: np.ndarray, valid_bool: np.ndarray) -> np.ndarray:
     return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
 
 
+def _time_years(time_values: np.ndarray) -> np.ndarray:
+    """将 datetime64 数组映射到自然年整数。"""
+    t = np.asarray(time_values)
+    return t.astype("datetime64[Y]").astype(np.int32) + 1970
+
+
+def _normalize_split_years(split_years: dict[str, Any] | None) -> dict[str, tuple[int, int]]:
+    defaults: dict[str, tuple[int, int]] = {
+        "train": (1994, 2013),
+        "test": (2014, 2014),
+        "val": (2015, 2015),
+    }
+    if not isinstance(split_years, dict):
+        return defaults
+    out = defaults.copy()
+    for key in ("train", "test", "val"):
+        value = split_years.get(key)
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            y0 = int(value[0])
+            y1 = int(value[1])
+            if y0 > y1:
+                y0, y1 = y1, y0
+            out[key] = (y0, y1)
+    return out
+
+
 class ElementForecastWindowDataset(Dataset):
     """按时间窗构建样本：输入 ``input_steps``，输出 ``output_steps``。"""
 
@@ -65,6 +91,8 @@ class ElementForecastWindowDataset(Dataset):
         window_stride: int = 1,
         open_file_lru_size: int = 16,
         split: str | None = None,
+        split_mode: str = "competition_years",
+        split_years: dict[str, Any] | None = None,
         split_ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
         norm_stats_path: str | Path | None = None,
         root: Path | None = None,
@@ -92,6 +120,8 @@ class ElementForecastWindowDataset(Dataset):
         self.window_stride = window_stride
         self._norm = load_norm_stats(Path(norm_stats_path)) if norm_stats_path else None
         self.split = split
+        self.split_mode = str(split_mode).strip().lower()
+        self._split_years = _normalize_split_years(split_years)
         self._split_ratios = (train_ratio, val_ratio, test_ratio)
         # 兼容旧参数名，仅复用 1 个文件句柄。
         self._open_ds_lru: OrderedDict[Path, Any] = OrderedDict()
@@ -132,6 +162,37 @@ class ElementForecastWindowDataset(Dataset):
             return
 
         all_starts = [i * self.window_stride for i in range(total_windows)]
+        if self.split_mode == "competition_years":
+            ds_time = open_nc(self.path)
+            try:
+                years = _time_years(np.asarray(ds_time["time"].values))
+            finally:
+                ds_time.close()
+
+            train_y0, train_y1 = self._split_years["train"]
+            test_y0, test_y1 = self._split_years["test"]
+            val_y0, val_y1 = self._split_years["val"]
+            windows_by_split: dict[str, list[int]] = {"train": [], "test": [], "val": []}
+            for t0 in all_starts:
+                out_start = t0 + self.input_steps
+                out_end = out_start + self.output_steps - 1
+                y0 = int(years[out_start])
+                y1 = int(years[out_end])
+                if train_y0 <= y0 <= train_y1 and train_y0 <= y1 <= train_y1:
+                    windows_by_split["train"].append(t0)
+                elif test_y0 <= y0 <= test_y1 and test_y0 <= y1 <= test_y1:
+                    windows_by_split["test"].append(t0)
+                elif val_y0 <= y0 <= val_y1 and val_y0 <= y1 <= val_y1:
+                    windows_by_split["val"].append(t0)
+
+            if split in ("train", "val", "test"):
+                self._windows = windows_by_split[split]
+            elif split is None:
+                self._windows = all_starts
+            else:
+                raise ValueError(f"invalid split: {split!r}, expected train/val/test/None")
+            return
+
         train_end = int(total_windows * train_ratio)
         val_end = train_end + int(total_windows * val_ratio)
 

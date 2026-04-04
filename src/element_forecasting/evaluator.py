@@ -17,13 +17,6 @@ def mae(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 	return torch.mean(torch.abs(pred - target))
 
 
-def relative_mse_percent(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
-	"""大赛要求的相对 MSE 百分比。"""
-	num = torch.sum((pred - target) ** 2)
-	den = torch.sum(target ** 2).clamp_min(eps)
-	return (num / den) * 100.0
-
-
 def nse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 	"""Nash-Sutcliffe Efficiency。"""
 
@@ -38,7 +31,6 @@ def compute_regression_metrics(pred: torch.Tensor, target: torch.Tensor) -> dict
 		"rmse": float(rmse(pred, target).item()),
 		"mae": float(mae(pred, target).item()),
 		"nse": float(nse(pred, target).item()),
-		"relative_mse_percent": float(relative_mse_percent(pred, target).item()),
 	}
 
 
@@ -57,15 +49,18 @@ def masked_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, eps
 	return num / den
 
 
-def masked_relative_mse_percent(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
-	"""掩膜版 Relative MSE 百分比（大赛标准）。"""
+def masked_nrmse_percent(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
+	"""掩膜版 NRMSE 百分比：NRMSE = RMSE / (target_max - target_min) * 100。"""
 	p = pred.float()
 	t = target.float()
 	m = mask.float()
-	diff2 = (p - t).pow(2)
-	num = torch.sum(diff2 * m)
-	den = torch.sum(t.pow(2) * m).clamp_min(eps)
-	return (num / den) * 100.0
+	valid = m > 0
+	if not torch.any(valid):
+		return torch.tensor(float("inf"), device=p.device)
+	rmse_val = masked_rmse(p, t, m, eps=eps)
+	t_valid = t[valid]
+	t_range = (torch.max(t_valid) - torch.min(t_valid)).clamp_min(eps)
+	return (rmse_val / t_range) * 100.0
 
 def masked_weighted_mse(
 	pred: torch.Tensor,
@@ -309,9 +304,9 @@ def compute_regression_metrics_masked(
 	return {
 		"mse": float(masked_mse(pred, target, mask).item()),
 		"rmse": float(masked_rmse(pred, target, mask).item()),
+		"nrmse_percent": float(masked_nrmse_percent(pred, target, mask).item()),
 		"mae": float(masked_mae(pred, target, mask).item()),
 		"nse": float(masked_nse(pred, target, mask).item()),
-		"relative_mse_percent": float(masked_relative_mse_percent(pred, target, mask).item()),
 		"grad_rmse": float(masked_gradient_rmse(pred, target, mask).item()),
 		"extreme_error": float(masked_local_extreme_error(pred, target, mask).item()),
 		"edge_rmse": float(masked_edge_region_rmse(pred, target, mask, quantile=edge_quantile).item()),

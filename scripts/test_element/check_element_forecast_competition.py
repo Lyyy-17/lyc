@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -106,51 +106,8 @@ def _roll_forecast_std(
     return pred_std
 
 
-def _build_single_file_subset(
-    full_ds: ElementForecastWindowDataset,
-    split: str,
-    train_ratio: float,
-    val_ratio: float,
-) -> tuple[torch.utils.data.Dataset, dict[str, int]]:
-    n_total = len(full_ds)
-    if n_total <= 0:
-        raise SystemExit("single-file dataset is empty")
-
-    if split == "all":
-        return full_ds, {"total": n_total, "train": n_total, "val": 0, "test": 0, "selected": n_total}
-
-    if not (0.0 < train_ratio < 1.0):
-        raise SystemExit("train_ratio (or single_file_train_ratio) must be in (0,1)")
-    if not (0.0 <= val_ratio < 1.0):
-        raise SystemExit("val_ratio (or single_file_val_ratio) must be in [0,1)")
-    if train_ratio + val_ratio >= 1.0:
-        raise SystemExit("train_ratio + val_ratio must be < 1")
-
-    n_train = int(n_total * train_ratio)
-    n_val = int(n_total * val_ratio)
-    n_test = n_total - n_train - n_val
-
-    if split == "train":
-        indices = list(range(0, n_train))
-    elif split == "val":
-        indices = list(range(n_train, n_train + n_val))
-    elif split == "test":
-        indices = list(range(n_train + n_val, n_total))
-    else:
-        raise SystemExit(f"unsupported split: {split}")
-
-    if not indices:
-        raise SystemExit(
-            f"split={split} has 0 windows under current ratios; total={n_total}, train={n_train}, val={n_val}, test={n_test}"
-        )
-
-    return Subset(full_ds, indices), {
-        "total": n_total,
-        "train": n_train,
-        "val": n_val,
-        "test": n_test,
-        "selected": len(indices),
-    }
+def _safe_range_denominator(min_val: float, max_val: float, eps: float = 1e-12) -> float:
+    return max(float(max_val) - float(min_val), eps)
 
 
 def _write_per_horizon_csv(
@@ -158,12 +115,12 @@ def _write_per_horizon_csv(
     horizon_hours: np.ndarray,
     mse_h: np.ndarray,
     rmse_h: np.ndarray,
+    nrmse_pct_h: np.ndarray,
     mae_h: np.ndarray,
-    rel_mse_pct_h: np.ndarray,
 ) -> None:
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["step", "horizon_hours", "mse", "rmse", "mae", "relative_mse_percent"])
+        w.writerow(["step", "horizon_hours", "mse", "rmse", "nrmse_percent", "mae"])
         for i in range(horizon_hours.shape[0]):
             w.writerow(
                 [
@@ -171,8 +128,8 @@ def _write_per_horizon_csv(
                     float(horizon_hours[i]),
                     float(mse_h[i]),
                     float(rmse_h[i]),
+                    float(nrmse_pct_h[i]),
                     float(mae_h[i]),
-                    float(rel_mse_pct_h[i]),
                 ]
             )
 
@@ -182,8 +139,8 @@ def _plot_horizon_metrics(
     horizon_hours: np.ndarray,
     rmse_h: np.ndarray,
     mae_h: np.ndarray,
-    rel_mse_pct_h: np.ndarray,
-    mse_percent_threshold: float,
+    nrmse_pct_h: np.ndarray,
+    nrmse_percent_threshold: float,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -198,11 +155,11 @@ def _plot_horizon_metrics(
     ax0.legend(loc="best")
 
     ax1 = axes[1]
-    ax1.plot(horizon_hours, rel_mse_pct_h, marker="o", label="Relative MSE(%)")
-    ax1.axhline(float(mse_percent_threshold), color="tab:red", linestyle="--", label="Threshold")
+    ax1.plot(horizon_hours, nrmse_pct_h, marker="o", label="NRMSE(%)")
+    ax1.axhline(float(nrmse_percent_threshold), color="tab:red", linestyle="--", label="Threshold")
     ax1.set_xlabel("Forecast Horizon (hours)")
-    ax1.set_ylabel("Relative MSE (%)")
-    ax1.set_title("Per-Horizon Relative MSE vs Threshold")
+    ax1.set_ylabel("NRMSE (%)")
+    ax1.set_title("Per-Horizon NRMSE vs Threshold")
     ax1.legend(loc="best")
 
     fig.savefig(fig_path, **standard_savefig_kwargs())
@@ -213,8 +170,8 @@ def _plot_competition_comparison(
     fig_path: Path,
     horizon_hours: float,
     horizon_threshold: float,
-    rel_mse_percent: float,
-    mse_percent_threshold: float,
+    nrmse_percent: float,
+    nrmse_percent_threshold: float,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -227,8 +184,8 @@ def _plot_competition_comparison(
     ax0.set_ylabel("Hours")
 
     ax1 = axes[1]
-    ax1.bar(["actual", "threshold"], [rel_mse_percent, mse_percent_threshold], color=["#DD8452", "#C44E52"])
-    ax1.set_title("Relative MSE Requirement")
+    ax1.bar(["actual", "threshold"], [nrmse_percent, nrmse_percent_threshold], color=["#DD8452", "#C44E52"])
+    ax1.set_title("NRMSE Requirement")
     ax1.set_ylabel("Percent")
 
     fig.savefig(fig_path, **standard_savefig_kwargs())
@@ -286,14 +243,16 @@ def _plot_sample_map(
     sample_mask: torch.Tensor,
     var_name: str,
     time_step_hours: float,
+    channel_idx: int = 0,
 ) -> None:
     import matplotlib.pyplot as plt
 
     apply_matplotlib_defaults()
 
-    pred = sample_pred[-1, 0].float().cpu().numpy()
-    target = sample_target[-1, 0].float().cpu().numpy()
-    mask = sample_mask[-1, 0].float().cpu().numpy() > 0.5
+    pred = sample_pred[-1, channel_idx].float().cpu().numpy()
+    target = sample_target[-1, channel_idx].float().cpu().numpy()
+    mask_c = channel_idx if sample_mask.shape[1] > channel_idx else 0
+    mask = sample_mask[-1, mask_c].float().cpu().numpy() > 0.5
 
     pred = np.where(mask, pred, np.nan)
     target = np.where(mask, target, np.nan)
@@ -343,17 +302,17 @@ def _write_markdown_summary(
     lines.append(f"- Verdict: {'PASS' if report['pass']['overall'] else 'FAIL'}")
     lines.append(f"- Horizon: {report['model']['horizon_hours']:.2f} h (threshold >= {report['competition_thresholds']['horizon_hours_min']:.2f} h)")
     lines.append(
-        f"- Relative MSE: {report['metrics']['relative_mse_percent']:.4f}% "
-        f"(threshold <= {report['competition_thresholds']['mse_percent_max']:.4f}%)"
+        f"- NRMSE: {report['metrics']['nrmse_percent']:.4f}% "
+        f"(threshold <= {report['competition_thresholds']['nrmse_percent_max']:.4f}%)"
     )
     lines.append("")
     lines.append("## Metrics")
     lines.append("")
     lines.append(f"- MSE: {report['metrics']['mse']:.6f}")
     lines.append(f"- RMSE: {report['metrics']['rmse']:.6f}")
+    lines.append(f"- NRMSE(%): {report['metrics']['nrmse_percent']:.6f}")
     lines.append(f"- MAE: {report['metrics']['mae']:.6f}")
     lines.append(f"- NSE: {report['metrics']['nse']:.6f}")
-    lines.append(f"- Relative MSE(%): {report['metrics']['relative_mse_percent']:.6f}")
     lines.append("")
     lines.append("## Files")
     lines.append("")
@@ -372,15 +331,14 @@ def main() -> None:
     ap.add_argument("--processed-dir", type=str, default=None)
     ap.add_argument("--norm", type=str, default=None)
     ap.add_argument("--split", type=str, default="test", choices=["train", "val", "test", "all"])
-    ap.add_argument("--single-file-train-ratio", type=float, default=None)
-    ap.add_argument("--single-file-val-ratio", type=float, default=None)
+    ap.add_argument("--split-mode", type=str, default=None, choices=["competition_years", "ratio"])
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--num-workers", type=int, default=None)
     ap.add_argument("--device", type=str, default="auto")
     ap.add_argument("--time-step-hours", type=float, default=1.0, help="每个时间步代表多少小时")
     ap.add_argument("--eval-horizon-hours", type=float, default=None, help="滚动预测目标时长（小时）。默认自动取模型自身输出长度与比赛目标之间的最大值")
     ap.add_argument("--horizon-hours-threshold", type=float, default=72.0)
-    ap.add_argument("--mse-percent-threshold", type=float, default=15.0)
+    ap.add_argument("--nrmse-percent-threshold", type=float, default=15.0)
     ap.add_argument("--open-file-lru-size", type=int, default=16)
     ap.add_argument("--overlap-steps", type=int, default=None, help="滚动推理重叠步数（默认读取 train.yaml，缺省 4）")
     ap.add_argument(
@@ -461,29 +419,80 @@ def main() -> None:
     if not data_file.is_file():
         raise SystemExit(f"single data file not found: {data_file}")
 
-    train_ratio = float(
-        args.single_file_train_ratio
-        if args.single_file_train_ratio is not None
-        else train_cfg.get("train_ratio", train_cfg.get("single_file_train_ratio", 0.8))
-    )
-    val_ratio = float(
-        args.single_file_val_ratio
-        if args.single_file_val_ratio is not None
-        else train_cfg.get("val_ratio", train_cfg.get("single_file_val_ratio", 0.2))
-    )
+    split_mode = str(args.split_mode or train_cfg.get("split_mode", "competition_years")).strip().lower()
+    split_years = train_cfg.get("split_years", None)
 
-    full_ds = ElementForecastWindowDataset(
+    ds_split = None if args.split == "all" else args.split
+    ds = ElementForecastWindowDataset(
         data_file=data_file,
         var_names=var_names,
         input_steps=input_steps,
         output_steps=eval_steps,
         window_stride=int(train_cfg.get("window_stride", 1)),
         open_file_lru_size=max(1, int(args.open_file_lru_size)),
-        split=None,
+        split=ds_split,
+        split_mode=split_mode,
+        split_years=split_years,
         norm_stats_path=norm_path,
         root=ROOT,
     )
-    ds, split_stats = _build_single_file_subset(full_ds, args.split, train_ratio, val_ratio)
+    if len(ds) <= 0:
+        raise SystemExit(f"split={args.split} has 0 windows under split_mode={split_mode}")
+    split_stats = {
+        "total": len(ElementForecastWindowDataset(
+            data_file=data_file,
+            var_names=var_names,
+            input_steps=input_steps,
+            output_steps=eval_steps,
+            window_stride=int(train_cfg.get("window_stride", 1)),
+            open_file_lru_size=max(1, int(args.open_file_lru_size)),
+            split=None,
+            split_mode=split_mode,
+            split_years=split_years,
+            norm_stats_path=norm_path,
+            root=ROOT,
+        )),
+        "train": len(ElementForecastWindowDataset(
+            data_file=data_file,
+            var_names=var_names,
+            input_steps=input_steps,
+            output_steps=eval_steps,
+            window_stride=int(train_cfg.get("window_stride", 1)),
+            open_file_lru_size=max(1, int(args.open_file_lru_size)),
+            split="train",
+            split_mode=split_mode,
+            split_years=split_years,
+            norm_stats_path=norm_path,
+            root=ROOT,
+        )),
+        "val": len(ElementForecastWindowDataset(
+            data_file=data_file,
+            var_names=var_names,
+            input_steps=input_steps,
+            output_steps=eval_steps,
+            window_stride=int(train_cfg.get("window_stride", 1)),
+            open_file_lru_size=max(1, int(args.open_file_lru_size)),
+            split="val",
+            split_mode=split_mode,
+            split_years=split_years,
+            norm_stats_path=norm_path,
+            root=ROOT,
+        )),
+        "test": len(ElementForecastWindowDataset(
+            data_file=data_file,
+            var_names=var_names,
+            input_steps=input_steps,
+            output_steps=eval_steps,
+            window_stride=int(train_cfg.get("window_stride", 1)),
+            open_file_lru_size=max(1, int(args.open_file_lru_size)),
+            split="test",
+            split_mode=split_mode,
+            split_years=split_years,
+            norm_stats_path=norm_path,
+            root=ROOT,
+        )),
+        "selected": len(ds),
+    }
 
     batch_size = int(args.batch_size if args.batch_size is not None else train_cfg.get("batch_size", 8))
     num_workers = int(args.num_workers if args.num_workers is not None else train_cfg.get("num_workers", 0))
@@ -513,11 +522,15 @@ def main() -> None:
     mask_total = 0.0
     target_sum_total = 0.0
     target_sq_total = 0.0
+    target_min = float("inf")
+    target_max = float("-inf")
 
     ss_res_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
     abs_err_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
     mask_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
     target_sq_h = torch.zeros(eval_steps, dtype=torch.float64, device=compute_device)
+    target_min_h = torch.full((eval_steps,), float("inf"), dtype=torch.float64, device=compute_device)
+    target_max_h = torch.full((eval_steps,), float("-inf"), dtype=torch.float64, device=compute_device)
 
     sample_pred: torch.Tensor | None = None
     sample_target: torch.Tensor | None = None
@@ -556,6 +569,22 @@ def main() -> None:
             mask_h += torch.sum(mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
             target_sq_h += torch.sum(target.pow(2) * mask, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
 
+            valid = mask > 0.5
+            if torch.any(valid):
+                batch_target_min = float(torch.min(target[valid]).item())
+                batch_target_max = float(torch.max(target[valid]).item())
+                target_min = min(target_min, batch_target_min)
+                target_max = max(target_max, batch_target_max)
+
+                inf_tensor = torch.full_like(target, float("inf"))
+                ninf_tensor = torch.full_like(target, float("-inf"))
+                tgt_min_map = torch.where(valid, target, inf_tensor)
+                tgt_max_map = torch.where(valid, target, ninf_tensor)
+                batch_min_h = torch.amin(tgt_min_map, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+                batch_max_h = torch.amax(tgt_max_map, dim=(0, 2, 3, 4)).to(dtype=torch.float64)
+                target_min_h = torch.minimum(target_min_h, batch_min_h)
+                target_max_h = torch.maximum(target_max_h, batch_max_h)
+
             total_samples += int(x.shape[0])
 
             if sample_pred is None and int(x.shape[0]) > 0:
@@ -572,36 +601,37 @@ def main() -> None:
 
     mse = ss_res_total / max(mask_total, eps)
     rmse = math.sqrt(max(mse, 0.0))
+    nrmse_pct = (rmse / _safe_range_denominator(target_min, target_max, eps=eps)) * 100.0
     mae = abs_err_total / max(mask_total, eps)
 
     ss_tot = target_sq_total - (target_sum_total * target_sum_total) / max(mask_total, eps)
     nse = 1.0 - (ss_res_total / max(ss_tot, eps))
-    rel_mse_pct = (ss_res_total / max(target_sq_total, eps)) * 100.0
 
     mse_h = (ss_res_h / torch.clamp_min(mask_h, eps)).cpu().numpy()
     rmse_h = np.sqrt(np.maximum(mse_h, 0.0))
+    range_h = torch.clamp_min(target_max_h - target_min_h, eps).cpu().numpy()
+    nrmse_pct_h = (rmse_h / np.maximum(range_h, eps)) * 100.0
     mae_h = (abs_err_h / torch.clamp_min(mask_h, eps)).cpu().numpy()
-    rel_mse_pct_h = ((ss_res_h / torch.clamp_min(target_sq_h, eps)) * 100.0).cpu().numpy()
     horizon_hours_axis = (np.arange(eval_steps, dtype=np.float64) + 1.0) * float(args.time_step_hours)
 
     horizon_hours = float(eval_steps) * float(args.time_step_hours)
     pass_horizon = horizon_hours >= float(args.horizon_hours_threshold)
-    pass_mse_pct = rel_mse_pct <= float(args.mse_percent_threshold)
-    pass_all = bool(pass_horizon and pass_mse_pct)
+    pass_nrmse_pct = nrmse_pct <= float(args.nrmse_percent_threshold)
+    pass_all = bool(pass_horizon and pass_nrmse_pct)
 
     per_horizon_csv = output_dir / "per_horizon_metrics.csv"
-    _write_per_horizon_csv(per_horizon_csv, horizon_hours_axis, mse_h, rmse_h, mae_h, rel_mse_pct_h)
+    _write_per_horizon_csv(per_horizon_csv, horizon_hours_axis, mse_h, rmse_h, nrmse_pct_h, mae_h)
 
     fig1 = figures_dir / "horizon_metrics.png"
-    _plot_horizon_metrics(fig1, horizon_hours_axis, rmse_h, mae_h, rel_mse_pct_h, float(args.mse_percent_threshold))
+    _plot_horizon_metrics(fig1, horizon_hours_axis, rmse_h, mae_h, nrmse_pct_h, float(args.nrmse_percent_threshold))
 
     fig2 = figures_dir / "competition_threshold_comparison.png"
     _plot_competition_comparison(
         fig2,
         horizon_hours=horizon_hours,
         horizon_threshold=float(args.horizon_hours_threshold),
-        rel_mse_percent=rel_mse_pct,
-        mse_percent_threshold=float(args.mse_percent_threshold),
+        nrmse_percent=nrmse_pct,
+        nrmse_percent_threshold=float(args.nrmse_percent_threshold),
     )
 
     figure_files = [str(fig1), str(fig2)]
@@ -619,16 +649,20 @@ def main() -> None:
         )
         figure_files.append(str(fig3))
 
-        fig4 = figures_dir / "sample_last_horizon_map_var0.png"
-        _plot_sample_map(
-            fig4,
-            sample_pred=sample_pred,
-            sample_target=sample_target,
-            sample_mask=sample_mask,
-            var_name=(var_names[0] if len(var_names) > 0 else "var_0"),
-            time_step_hours=float(args.time_step_hours),
-        )
-        figure_files.append(str(fig4))
+        n_plot = max(1, min(int(args.max_plot_vars), len(var_names)))
+        for c in range(n_plot):
+            vname = var_names[c] if c < len(var_names) else f"var_{c}"
+            fig_map = figures_dir / f"sample_last_horizon_map_{vname}.png"
+            _plot_sample_map(
+                fig_map,
+                sample_pred=sample_pred,
+                sample_target=sample_target,
+                sample_mask=sample_mask,
+                var_name=vname,
+                time_step_hours=float(args.time_step_hours),
+                channel_idx=c,
+            )
+            figure_files.append(str(fig_map))
 
     report = {
         "task": "element_forecasting",
@@ -639,8 +673,8 @@ def main() -> None:
             "split": args.split,
             "total_windows": split_stats["total"],
             "selected_windows": split_stats["selected"],
-            "single_file_train_ratio": train_ratio,
-            "single_file_val_ratio": val_ratio,
+            "split_mode": split_mode,
+            "split_years": split_years,
         },
         "model": {
             "var_names": list(var_names),
@@ -653,18 +687,18 @@ def main() -> None:
         },
         "competition_thresholds": {
             "horizon_hours_min": float(args.horizon_hours_threshold),
-            "mse_percent_max": float(args.mse_percent_threshold),
+            "nrmse_percent_max": float(args.nrmse_percent_threshold),
         },
         "metrics": {
             "mse": float(mse),
             "rmse": float(rmse),
+            "nrmse_percent": float(nrmse_pct),
             "mae": float(mae),
             "nse": float(nse),
-            "relative_mse_percent": float(rel_mse_pct),
         },
         "pass": {
             "horizon": bool(pass_horizon),
-            "mse_percent": bool(pass_mse_pct),
+            "nrmse_percent": bool(pass_nrmse_pct),
             "overall": bool(pass_all),
         },
         "artifacts": {
@@ -673,7 +707,7 @@ def main() -> None:
         },
         "notes": [
             "evaluation is single-file only and uses rolling autoregressive forecasting",
-            "relative_mse_percent = sum((pred-target)^2)/sum(target^2)*100 on valid mask",
+            "nrmse_percent = rmse / (target_max - target_min) * 100 on valid mask",
             "if time_step_hours is not 1, pass --time-step-hours explicitly",
         ],
     }
@@ -690,11 +724,12 @@ def main() -> None:
     _log.info("=" * 60)
     _log.info(f"🎯 Verdict         : {verdict_str}")
     _log.info(f"⏱️  Horizon         : {horizon_hours:.2f} h (Target: >= {args.horizon_hours_threshold} h) -> {'✅' if pass_horizon else '❌'}")
-    _log.info(f"📉 Relative MSE    : {rel_mse_pct:.4f} % (Target: <= {args.mse_percent_threshold} %) -> {'✅' if pass_mse_pct else '❌'}")
+    _log.info(f"📉 NRMSE           : {nrmse_pct:.4f} % (Target: <= {args.nrmse_percent_threshold} %) -> {'✅' if pass_nrmse_pct else '❌'}")
     _log.info("-" * 60)
     _log.info("🏅 Detailed Metrics:")
     _log.info(f"  - MSE            : {mse:.6f}")
     _log.info(f"  - RMSE           : {rmse:.6f}")
+    _log.info(f"  - NRMSE(%)       : {nrmse_pct:.6f}")
     _log.info(f"  - MAE            : {mae:.6f}")
     _log.info(f"  - NSE            : {nse:.6f}")
     _log.info("-" * 60)

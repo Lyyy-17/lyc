@@ -32,8 +32,12 @@
    - 使用 window_stride 控制窗口步长。
 
 3. 训练/验证/测试切分
-   - 在单文件时间窗口序列上按比例切分 train/val/test。
-   - 比例由 train.yaml 中 train_ratio、val_ratio、test_ratio 控制。
+   - 默认按赛题固定年份切分（`split_mode=competition_years`）：
+     - train: 1994-2013
+     - test: 2014
+     - val: 2015
+   - 窗口归属按预测目标段（output window）年份判定，避免跨年泄漏。
+   - 仅当 `split_mode=ratio` 时，才使用 `train_ratio/val_ratio/test_ratio`。
 
 4. 变量配置
    - 输入变量与输出变量使用同一组 var_names（如 sst/sss/ssu/ssv）。
@@ -43,8 +47,17 @@
 
 1. 支持 AMP、梯度累积、多进程 DataLoader。
 2. 支持 spatial_downsample 以降低空间 token 数和显存压力。
-3. 当前损失为主损失 + Transformer 辅助损失（masked_mse 组合），未启用 FFT 频域损失。
-4. 训练入口：scripts/04_train_forecast.py（默认走主模型；--baseline 走旧基线）。
+3. 训练损失由主损失、Transformer 辅助损失、空间均值约束、梯度一致性与可选边缘损失组成。
+4. 训练采用 rollout 多段监督；默认 `rollout_steps=3`、`rollout_gamma=1.0`，即 24h x 3 段对齐 72h 目标。
+5. Scheduled Sampling 默认从首个 epoch 开始，`epsilon` 由 `1.0` 按 cosine 衰减到 `0.08`，减轻训练-推理曝光偏差。
+6. 训练入口：scripts/04_train_forecast.py（默认走主模型；--baseline 走旧基线）。
+
+### 验证与最优模型选择（已对齐赛题）
+
+1. 验证阶段不再仅评估单段 24 步前向，而是使用与推理一致的滚动预测（支持 overlap blend）。
+2. 默认验证目标为 72 小时（`val_target_steps=72`），与竞赛主指标对齐。
+3. `val_loss` 已与训练阶段使用同口径 rollout 组合损失（主损失 + aux + 空间均值 + 梯度 + 可选边缘 + rollout_gamma 权重），可直接与 `train_loss` 比较收敛趋势。
+4. best checkpoint 选择依据为验证集 `nrmse_percent`（越低越好）。
 
 ## 关键配置
 
@@ -54,12 +67,16 @@
 
 2. 训练配置：configs/element_forecasting/train.yaml
    - data_file, norm_stats_path
-   - window_stride, train_ratio, val_ratio, test_ratio
+   - window_stride, split_mode, split_years
+   - train_ratio, val_ratio, test_ratio（仅 split_mode=ratio 时生效）
    - epochs, batch_size, lr, num_workers, device, amp, grad_accum_steps
+   - rollout_steps, rollout_gamma, val_target_steps
+   - scheduled_sampling_start_epoch, scheduled_sampling_epsilon_start, scheduled_sampling_epsilon_min, scheduled_sampling_decay_type
+   - overlap_blend_enabled, overlap_steps
 
 ## 评估指标 (Metrics)
 
-1. 大赛相对均方误差 (Relative MSE Percentage)
-   - 比赛门槛指标为：Relative MSE ≤ 15%。
-   - 在新版 `evaluator.py` 中增加了 `relative_mse_percent` 与 `masked_relative_mse_percent` 方法，对应大赛公式：`sum((pred-target)^2) / sum(target^2) * 100.0`。
-   - 因数据标准化导致 `sum(target^2)/N ≈ 1.0`，日常训练日志中输出的 `val_mse` (形如 `0.15`) 实际上等价于赛题中百分比格式的相对 MSE (`15%`)。
+1. 大赛主指标：NRMSE (%)
+   - 当前实现采用掩膜区域上的 `NRMSE = RMSE / (target_max - target_min) * 100`。
+   - 训练验证日志与竞赛检查脚本均输出 `nrmse_percent`，并作为阈值对比与 best checkpoint 选择依据。
+
