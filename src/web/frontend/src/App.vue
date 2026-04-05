@@ -355,7 +355,10 @@ const isPlaying = ref(false)
 let playInterval = null
 const colorRangeCache = new Map()
 
-const API_BASE = 'http://localhost:8000/api'
+const API_BASE = (
+  (import.meta.env.VITE_API_BASE as string | undefined) ||
+  `${window.location.protocol}//${window.location.hostname}:8000/api`
+).replace(/\/$/, '')
 
 const anomalyLabelsPath = ref('outputs/anomaly_detection/labels_competition.json')
 const anomalyEventsPath = ref('outputs/anomaly_detection/events_competition.json')
@@ -463,10 +466,10 @@ const loadAnomalyOverview = async () => {
       manifest_path: anomalyManifestPath.value,
       split: anomalySplit.value,
       max_points: 300
-    })
+    }, { timeout: 30000 })
     anomalyData.value = res.data
   } catch (err) {
-    anomalyError.value = err.response?.data?.detail || err.message || '加载失败'
+    anomalyError.value = err?.response?.data?.detail || err?.message || '加载失败'
     anomalyData.value = null
   } finally {
     anomalyLoading.value = false
