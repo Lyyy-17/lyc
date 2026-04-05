@@ -55,6 +55,7 @@ class AnomalyInspectRequest(BaseModel):
 
 # In-memory store for the last prediction to serve slices efficiently
 prediction_cache = {}
+anomaly_timestamps_cache: dict[tuple[str, str, str], list[int]] = {}
 
 
 def _to_epoch_seconds(ts_raw: int) -> int:
@@ -293,22 +294,23 @@ def inspect_anomaly(req: AnomalyInspectRequest):
                 continue
             events.append({"name": str(ev.get("name", "event")), "start": start, "end": end})
 
-    ds = AnomalyFrameDataset(
-        processed_anomaly_dir=processed_dir,
-        split=split,
-        manifest_path=manifest_path,
-        norm_stats_path=norm_stats_path if os.path.exists(norm_stats_path) else None,
-        open_file_lru_size=max(0, int(req.open_file_lru_size)),
-    )
-    try:
-        timestamps: list[int] = []
-        n = len(ds)
-        for i in range(n):
-            sample = ds[i]
-            ts = int(sample.get("timestamp", -1))
-            timestamps.append(_to_epoch_seconds(ts))
-    finally:
-        ds.close()
+    cache_key = (processed_dir, manifest_path, split)
+    cached_timestamps = anomaly_timestamps_cache.get(cache_key)
+    if cached_timestamps is None:
+        ds = AnomalyFrameDataset(
+            processed_anomaly_dir=processed_dir,
+            split=split,
+            manifest_path=manifest_path,
+            norm_stats_path=norm_stats_path if os.path.exists(norm_stats_path) else None,
+            open_file_lru_size=max(0, int(req.open_file_lru_size)),
+        )
+        try:
+            timestamps = [_to_epoch_seconds(ts) for ts in ds.get_timestamps()]
+        finally:
+            ds.close()
+        anomaly_timestamps_cache[cache_key] = timestamps
+    else:
+        timestamps = cached_timestamps
 
     n_pair = min(len(labels), len(timestamps))
     if n_pair == 0:
@@ -363,4 +365,4 @@ def inspect_anomaly(req: AnomalyInspectRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8001, reload=True)

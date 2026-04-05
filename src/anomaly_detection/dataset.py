@@ -144,6 +144,32 @@ class AnomalyFrameDataset(Dataset):
     def __len__(self) -> int:
         return len(self.index)
 
+    def get_timestamp_by_index(self, idx: int) -> int:
+        """Return one sample timestamp quickly without loading feature tensors."""
+
+        pair_idx, t = self.index[idx]
+        ds_o, ds_w = self._get_pair_ds(pair_idx)
+        try:
+            if "valid_time" not in ds_o:
+                return -1
+            ts_raw = np.asarray(ds_o["valid_time"].values[t]).item()
+            try:
+                return int(ts_raw)
+            except Exception:
+                return -1
+        finally:
+            if self.open_file_lru_size <= 0:
+                ds_o.close()
+                ds_w.close()
+
+    def get_timestamps(self) -> list[int]:
+        """Return all sample timestamps with minimal IO for inspection/evaluation."""
+
+        out: list[int] = []
+        for i in range(len(self.index)):
+            out.append(self.get_timestamp_by_index(i))
+        return out
+
     def _get_pair_ds(self, pair_idx: int) -> tuple[Any, Any]:
         key = self.pairs[pair_idx]
         if self.open_file_lru_size <= 0:
