@@ -47,10 +47,11 @@
 
 1. 支持 AMP、梯度累积、多进程 DataLoader。
 2. 支持 spatial_downsample 以降低空间 token 数和显存压力。
-3. 训练损失由主损失、Transformer 辅助损失、空间均值约束、梯度一致性与可选边缘损失组成。
+3. 训练损失由主损失、Transformer 辅助损失、空间均值约束、梯度一致性与边缘损失组成；当前默认 `loss_gradient_consistency_weight=0.12`、`loss_edge_weight=0.03(sobel)`。
 4. 训练采用 rollout 多段监督；默认 `rollout_steps=3`、`rollout_gamma=1.0`，即 24h x 3 段对齐 72h 目标。
 5. Scheduled Sampling 默认从首个 epoch 开始，`epsilon` 由 `1.0` 按 cosine 衰减到 `0.08`，减轻训练-推理曝光偏差。
 6. 训练入口：scripts/04_train_forecast.py（默认走主模型；--baseline 走旧基线）。
+7. 当前推荐默认训练资源配置：`epochs=30`、`batch_size=8`、`num_workers=12`、`grad_accum_steps=4`（有效 batch 约为 32）。
 
 ### 验证与最优模型选择（已对齐赛题）
 
@@ -62,6 +63,8 @@
 ## 关键配置
 
 1. 模型配置：configs/element_forecasting/model.yaml
+   - multi_scale_enabled=false（关闭辅助 patch=8 融合，先抑制插值格纹）
+   - refine_head_hidden_ratio=1.5, refine_head_num_layers=4
    - d_model, nhead, num_layers, block_size, dropout, spatial_downsample
    - periodic_periods, periodic_harmonics
 
@@ -73,6 +76,7 @@
    - rollout_steps, rollout_gamma, val_target_steps
    - scheduled_sampling_start_epoch, scheduled_sampling_epsilon_start, scheduled_sampling_epsilon_min, scheduled_sampling_decay_type
    - overlap_blend_enabled, overlap_steps
+   - loss_gradient_consistency_weight=0.12, loss_edge_weight=0.03, edge_loss_type=sobel
 
 ## 评估指标 (Metrics)
 

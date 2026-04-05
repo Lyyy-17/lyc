@@ -5,7 +5,7 @@
   "dataset": {
     "data_file": "/OceanRace/data/processed/element_forecasting/path.txt",
     "split": "test",
-    "total_windows": 47758,
+    "total_windows": 47746,
     "selected_windows": 2134,
     "split_mode": "competition_years",
     "split_years": {
@@ -30,10 +30,10 @@
       "ssu",
       "ssv"
     ],
-    "input_steps": 24,
-    "single_shot_output_steps": 24,
+    "input_steps": 72,
+    "single_shot_output_steps": 72,
     "eval_output_steps": 72,
-    "rolling_iterations_estimate": 3,
+    "rolling_iterations_estimate": 1,
     "time_step_hours": 1.0,
     "horizon_hours": 72.0
   },
@@ -42,11 +42,11 @@
     "nrmse_percent_max": 15.0
   },
   "metrics": {
-    "mse": 0.22064635406671784,
-    "rmse": 0.46973008639719666,
-    "nrmse_percent": 1.2938796018683938,
-    "mae": 0.2100080508779505,
-    "nse": 0.998759748954818
+    "mse": 0.17225080420440675,
+    "rmse": 0.4150310882384677,
+    "nrmse_percent": 1.1240447460559,
+    "mae": 0.20525176048398636,
+    "nse": 0.999079567954991
   },
   "pass": {
     "horizon": true,

@@ -480,7 +480,15 @@ def run_training(args: argparse.Namespace) -> None:
 	history: list[dict[str, float]] = []
 
 	_log.info(
-		"start training | vars=%s | split_mode=%s | in/out=%d/%d | rollout=%d(gamma=%.2f) | val_target_steps=%d | overlap_blend=%s/%d | ss=%s(eps %.2f->%.2f) | amp=%s",
+		"start training\n"
+		"  vars=%s\n"
+		"  split_mode=%s\n"
+		"  in/out=%d/%d\n"
+		"  rollout=%d (gamma=%.2f)\n"
+		"  val_target_steps=%d\n"
+		"  overlap_blend=%s/%d\n"
+		"  scheduled_sampling=%s (eps %.2f->%.2f)\n"
+		"  amp=%s",
 		list(var_names),
 		split_mode,
 		input_steps,
@@ -496,7 +504,14 @@ def run_training(args: argparse.Namespace) -> None:
 		amp_enabled,
 	)
 	_log.info(
-		"data=%s | split=(%.2f,%.2f,%.2f) | split_years=%s | windows train/val=%d/%d | batch=%d accum=%d workers=%d",
+		"data setup\n"
+		"  data=%s\n"
+		"  split_ratio=(%.2f,%.2f,%.2f)\n"
+		"  split_years=%s\n"
+		"  windows train/val=%d/%d\n"
+		"  batch=%d\n"
+		"  grad_accum_steps=%d\n"
+		"  workers=%d",
 		str(data_file),
 		train_ratio,
 		val_ratio,
