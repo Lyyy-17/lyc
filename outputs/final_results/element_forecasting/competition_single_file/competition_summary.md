@@ -1,16 +1,16 @@
 # Element Forecast Competition Check (Single File)
 
-- Verdict: PASS
+- Verdict: FAIL
 - Horizon: 72.00 h (threshold >= 72.00 h)
-- NRMSE: 1.1240% (threshold <= 15.0000%)
+- Relative MSE: 24.7785% (threshold <= 15.0000%)
 
 ## Metrics
 
-- MSE: 0.172251
-- RMSE: 0.415031
-- NRMSE(%): 1.124045
-- MAE: 0.205252
-- NSE: 0.999080
+- MSE: 0.285862
+- RMSE: 0.534661
+- MAE: 0.263664
+- NSE: 0.998479
+- Relative MSE(%): 24.778517
 
 ## Files
 

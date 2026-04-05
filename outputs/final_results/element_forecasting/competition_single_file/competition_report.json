@@ -5,23 +5,10 @@
   "dataset": {
     "data_file": "/OceanRace/data/processed/element_forecasting/path.txt",
     "split": "test",
-    "total_windows": 47746,
-    "selected_windows": 2134,
-    "split_mode": "competition_years",
-    "split_years": {
-      "train": [
-        1994,
-        2013
-      ],
-      "test": [
-        2014,
-        2014
-      ],
-      "val": [
-        2015,
-        2015
-      ]
-    }
+    "total_windows": 47758,
+    "selected_windows": 7165,
+    "single_file_train_ratio": 0.7,
+    "single_file_val_ratio": 0.15
   },
   "model": {
     "var_names": [
@@ -30,28 +17,28 @@
       "ssu",
       "ssv"
     ],
-    "input_steps": 72,
-    "single_shot_output_steps": 72,
+    "input_steps": 24,
+    "single_shot_output_steps": 24,
     "eval_output_steps": 72,
-    "rolling_iterations_estimate": 1,
+    "rolling_iterations_estimate": 3,
     "time_step_hours": 1.0,
     "horizon_hours": 72.0
   },
   "competition_thresholds": {
     "horizon_hours_min": 72.0,
-    "nrmse_percent_max": 15.0
+    "mse_percent_max": 15.0
   },
   "metrics": {
-    "mse": 0.17225080420440675,
-    "rmse": 0.4150310882384677,
-    "nrmse_percent": 1.1240447460559,
-    "mae": 0.20525176048398636,
-    "nse": 0.999079567954991
+    "mse": 0.2858618525703653,
+    "rmse": 0.5346605021603572,
+    "mae": 0.26366410528834794,
+    "nse": 0.9984792796758009,
+    "relative_mse_percent": 24.778516609288037
   },
   "pass": {
     "horizon": true,
-    "nrmse_percent": true,
-    "overall": true
+    "mse_percent": false,
+    "overall": false
   },
   "artifacts": {
     "per_horizon_csv": "/OceanRace/outputs/final_results/element_forecasting/competition_single_file/per_horizon_metrics.csv",
@@ -67,7 +54,7 @@
   },
   "notes": [
     "evaluation is single-file only and uses rolling autoregressive forecasting",
-    "nrmse_percent = rmse / (target_max - target_min) * 100 on valid mask",
+    "relative_mse_percent = sum((pred_std-y_std)^2)/sum(y_std^2)*100 on valid mask",
     "if time_step_hours is not 1, pass --time-step-hours explicitly"
   ]
 }
