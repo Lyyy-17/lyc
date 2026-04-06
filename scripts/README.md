@@ -13,7 +13,7 @@
 | `smoke_element_forecast.py` | 合成极少样本 + 1 epoch，验证要素 ConvLSTM 基线链路（`outputs/smoke_element_baseline/`，见 `src/baseline/element_forecasting/README.md`） |
 | `03_train_eddy.py` | 涡旋识别训练入口（**占位**，待接入 `src/eddy_detection/`） |
 | `04_train_forecast.py` | 要素预报训练入口（支持命令行覆盖参数） |
-| `run_element_baseline_train.py` | 要素预报基线训练，读取 `configs/baseline/element_forecasting/{model,train}.yaml` |
+| `test_element/run_element_baseline_train.py` | 要素预报基线训练，读取 `configs/baseline/element_forecasting/{model,train}.yaml` |
 | `05_train_anomaly.py` | 风-浪异常训练与评估（主模型/基线可切换，支持阈值策略、labels/events） |
 | `05b_prepare_anomaly_eval_templates.py` | 生成 anomaly 的 labels/events 模板（用于准确率/AUC与事件关联评估） |
 | `05c_compare_anomaly_methods.py` | 统一对比主模型、AE baseline、PCA、IsolationForest |

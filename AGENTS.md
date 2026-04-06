@@ -96,7 +96,7 @@
 
 - 虚拟环境：`python3 -m venv .venv`，`pip install -r requirements.txt`；无 `python` 时用 `**python3`**。
 - 需 `PYTHONPATH=src` 时以脚本或文档为准。
-- 要素基线：`python3 scripts/run_element_baseline_train.py`。
+- 要素基线：`python3 scripts/test_element/run_element_baseline_train.py`。
 
 ---
 
