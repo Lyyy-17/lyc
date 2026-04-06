@@ -378,7 +378,13 @@ def run_training(args: argparse.Namespace) -> None:
 		if args.val_batch_size is not None
 		else train_cfg.get("val_batch_size", max(1, min(batch_size, 2)))
 	)
-	num_workers = int(args.num_workers if args.num_workers is not None else train_cfg.get("num_workers", 0))
+	num_workers = int(args.num_workers if args.num_workers is not None else train_cfg.get("num_workers", 4))
+	val_num_workers = int(
+		args.val_num_workers
+		if args.val_num_workers is not None
+		else train_cfg.get("val_num_workers", 0)
+	)
+	val_num_workers = max(0, min(1, val_num_workers))
 	device = args.device or train_cfg.get("device", "auto")
 	if device == "auto":
 		device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -402,27 +408,32 @@ def run_training(args: argparse.Namespace) -> None:
 	progress_bar_mininterval = max(0.2, progress_bar_mininterval)
 	progress_bar_leave = bool(train_cfg.get("progress_bar_leave", False))
 	pin_memory = str(device).startswith("cuda")
-	persistent_workers = num_workers > 0
-	loader_kwargs = {
+	train_loader_kwargs = {
 		"num_workers": num_workers,
 		"pin_memory": pin_memory,
-		"persistent_workers": persistent_workers,
+		"persistent_workers": num_workers > 0,
 	}
 	if num_workers > 0:
-		loader_kwargs["prefetch_factor"] = 2
+		train_loader_kwargs["prefetch_factor"] = 2
+	# 验证侧默认低并发并关闭持久 worker 与预取，优先稳定性和内存占用。
+	val_loader_kwargs = {
+		"num_workers": val_num_workers,
+		"pin_memory": pin_memory,
+		"persistent_workers": False,
+	}
 	train_loader = DataLoader(
 		train_ds,
 		batch_size=batch_size,
 		shuffle=True,
 		collate_fn=_collate,
-		**loader_kwargs,
+		**train_loader_kwargs,
 	)
 	val_loader = DataLoader(
 		val_ds,
 		batch_size=val_batch_size,
 		shuffle=False,
 		collate_fn=_collate,
-		**loader_kwargs,
+		**val_loader_kwargs,
 	)
 
 	sample = train_ds[0]
@@ -563,7 +574,7 @@ def run_training(args: argparse.Namespace) -> None:
 		"  train_batch=%d\n"
 		"  val_batch=%d\n"
 		"  grad_accum_steps=%d\n"
-		"  workers=%d",
+		"  workers train/val=%d/%d",
 		str(data_file),
 		train_ratio,
 		val_ratio,
@@ -575,6 +586,7 @@ def run_training(args: argparse.Namespace) -> None:
 		val_batch_size,
 		grad_accum_steps,
 		num_workers,
+		val_num_workers,
 	)
 	_log.debug(
 		"details | open_file_lru_size=%d | var_loss_weights=%s | loss_spatial_mean_weight=%.3f | loss_aux_spatial_mean_weight=%.3f | loss_gradient_consistency_weight=%.3f | loss_edge_weight=%.3f(%s) | region_weighting_enabled=%s(base=%.2f strength=%.2f q=%.2f) | rollout_detach_between_steps=%s | ss_start_epoch=%d | progress_bar_enabled=%s mininterval=%.2f leave=%s",
@@ -896,6 +908,7 @@ def main() -> None:
 	ap.add_argument("--val-batch-size", type=int, default=None)
 	ap.add_argument("--lr", type=float, default=None)
 	ap.add_argument("--num-workers", type=int, default=None)
+	ap.add_argument("--val-num-workers", type=int, default=None)
 	ap.add_argument("--device", type=str, default=None)
 	ap.add_argument("--output-dir", type=str, default=None)
 	ap.add_argument("--resume-from", type=str, default=None, help="从指定 checkpoint 继续训练")

@@ -5,6 +5,20 @@ import torch
 import torch.nn.functional as F
 
 
+def _safe_masked_quantile(values: torch.Tensor, valid_mask: torch.Tensor, q: float, max_samples: int = 2_000_000) -> torch.Tensor:
+	"""在大张量上安全计算掩膜分位数，避免 quantile 输入过大导致运行时错误。"""
+	v = values.float()
+	m = valid_mask.bool()
+	flat = v[m].flatten()
+	if flat.numel() == 0:
+		return torch.tensor(float("nan"), device=v.device, dtype=v.dtype)
+	if flat.numel() > max_samples:
+		idx = torch.randint(0, flat.numel(), (int(max_samples),), device=flat.device)
+		flat = flat[idx].contiguous()
+	q = float(max(0.0, min(1.0, q)))
+	return torch.quantile(flat, q)
+
+
 def mse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 	return torch.mean((pred - target) ** 2)
 
@@ -232,8 +246,7 @@ def build_online_region_weights(
 	g = _gradient_magnitude(t)
 	valid = m > 0
 	if torch.any(valid):
-		q = float(max(0.0, min(1.0, quantile)))
-		thr = torch.quantile(g[valid], q)
+		thr = _safe_masked_quantile(g, valid, q=float(quantile))
 		focus = (g >= thr).float()
 	else:
 		focus = torch.zeros_like(g)
@@ -287,8 +300,7 @@ def masked_edge_region_rmse(
 	g = _gradient_magnitude(t)
 	valid = m > 0
 	if torch.any(valid):
-		q = float(max(0.0, min(1.0, quantile)))
-		thr = torch.quantile(g[valid], q)
+		thr = _safe_masked_quantile(g, valid, q=float(quantile))
 		edge_mask = (g >= thr).float() * m
 	else:
 		edge_mask = torch.zeros_like(m)

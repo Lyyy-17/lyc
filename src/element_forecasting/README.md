@@ -74,7 +74,7 @@
    - data_file, norm_stats_path
    - window_stride, split_mode, split_years
    - train_ratio, val_ratio, test_ratio（仅 split_mode=ratio 时生效）
-   - epochs, batch_size, val_batch_size, lr, num_workers, device, amp, grad_accum_steps
+   - epochs, batch_size, val_batch_size, lr, num_workers, val_num_workers, device, amp, grad_accum_steps
    - resume_from, auto_resume_last
    - rollout_steps, rollout_gamma, val_target_steps
    - scheduled_sampling_start_epoch, scheduled_sampling_epsilon_start, scheduled_sampling_epsilon_min, scheduled_sampling_decay_type
@@ -93,4 +93,9 @@
 
 1. 从指定 checkpoint 继续：`python scripts/04_train_forecast.py --resume-from outputs/element_forecasting/checkpoints/hybrid_last.pt`
 2. 自动恢复最近一次 last checkpoint：`python scripts/04_train_forecast.py --auto-resume-last`
+
+## 内存稳定性建议
+
+1. 训练与验证 DataLoader 已分离并发配置：`num_workers` 仅用于训练，`val_num_workers` 仅用于验证。
+2. 默认验证侧使用 `val_num_workers=0`，并关闭 `persistent_workers/prefetch`，减少中途被系统 OOM-kill 的风险。
 

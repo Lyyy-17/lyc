@@ -4,6 +4,13 @@ __pycache__/
 *$py.class
 *.pyo
 *.pyd
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node / frontend（根目录 npm 依赖；子包另有各自 .gitignore）
+node_modules/
 
 # Virtual env
 venv/
@@ -12,6 +19,7 @@ venv/
 activate_oceanrace_env.sh
 .env/
 .env.*
+!.env.example
 .Python
 
 # PyCharm
@@ -55,9 +63,6 @@ Thumbs.db
 # dotenv
 .env
 
-# Ignore sensitive configs if any
+# 任务配置：configs/<任务>/ 下 model.yaml、train.yaml 等随仓库维护，不采用 *.yaml.example 模板流程
+# 仅敏感项单独文件：configs/*.secret（勿将密钥写入可提交的 yaml）
 configs/*.secret
-configs/element_forecasting/*
-!configs/element_forecasting/*.yaml.example
-configs/baseline/*
-!configs/baseline/**/*.yaml.example

@@ -4,6 +4,17 @@
 
 ---
 
+## 环境与依赖
+
+| 类型 | 说明 |
+|------|------|
+| **Python** | 推荐 `python3 -m venv .venv` 激活后执行 `pip install -r requirements.txt`。训练/脚本通常需将 `src` 加入模块搜索路径（见各脚本或 `PYTHONPATH=src`）。 |
+| **配置** | 数据与划分见 `configs/data_config.yaml`；各任务 `model.yaml` / `train.yaml` 在 `configs/<任务>/`（要素基线见 `configs/baseline/element_forecasting/`，与主模型分离）。敏感项勿入库，可使用 `configs/*.secret`。 |
+| **Node.js（可选）** | **根目录** `package.json` / `package-lock.json` 声明并锁定部分前端工具链依赖（如 Tailwind 相关）；克隆后若在根目录使用这些工具，执行 `npm ci` 或 `npm install`，生成的 `node_modules/` 由 `.gitignore` 忽略、**不提交**。 |
+| **Web 前端（可选）** | `src/web/frontend` 为 Vue 3 + Vite 子工程，在该目录下单独 `npm install` / `npm run dev`，详见 [`src/web/README.md`](src/web/README.md)。 |
+
+---
+
 ## 目录结构
 
 ```
@@ -11,6 +22,9 @@ OceanRace/
 ├── README.md
 ├── AGENTS.md                  # AI/协作约定与可 @ 引用的编程 Prompt（logger、可视化、outputs、configs）
 ├── requirements.txt
+├── package.json               # 根目录 npm 依赖声明（与部分工具链/样式配合）
+├── package-lock.json          # 锁定依赖树精确版本，宜提交；node_modules/ 不提交
+├── pytest.ini
 ├── configs/
 │   ├── data_config.yaml       # 数据路径、划分、批处理、artifacts 等
 │   ├── README.md              # 各子目录配置说明
@@ -40,6 +54,10 @@ OceanRace/
 │   │   ├── eddy_detection/
 │   │   ├── element_forecasting/   # convlstm、model、sequence_dataset、train
 │   │   └── anomaly_detection/
+│   ├── web/                   # 交互可视化：Gradio、Vue/Vite 前端、FastAPI 后端（见 src/web/README.md）
+│   │   ├── gradio_ui/
+│   │   ├── frontend/
+│   │   └── backend/
 │   ├── utils/                 # 公共工具（logger、visualization_defaults、dataset_utils、README）
 │   └── pipeline.py            # 主流程管道（占位）
 ├── models/                    # 最佳模型（从 outputs 挑选后放入，可提交）
@@ -50,9 +68,12 @@ OceanRace/
 │       └── anomaly_detection/     # 异常检测
 ├── scripts/                   # 命令行入口（见 scripts/README.md）
 │   ├── README.md
+│   ├── test_element/          # 要素基线/比赛检查相关
+│   │   ├── smoke_element_forecast.py      # 基线极少样本冒烟
+│   │   ├── run_element_baseline_train.py   # 要素 ConvLSTM 基线训练
+│   │   └── check_element_forecast_competition.py  # 要素比赛门槛检查（单文件/滚动等）
 │   ├── 01_data_inspect.py     # 数据探查
 │   ├── 02_preprocess.py       # 预处理
-│   ├── smoke_element_forecast.py  # 要素基线极少样本冒烟
 │   ├── 03_train_eddy.py       # 涡旋训练（占位，待接 src/eddy_detection）
 │   ├── 04_train_forecast.py   # 要素预报训练
 │   ├── 05_train_anomaly.py    # 异常检测训练（占位）
@@ -71,9 +92,11 @@ OceanRace/
 | `scripts/README.md` | 脚本说明、日志约定、基线实验衔接、典型流程 |
 | `scripts/01_data_inspect.py` | 只读：抽样 `data/raw`，缺测率与最值（可 `--out JSON`） |
 | `scripts/02_preprocess.py` | 清洗 → `data/processed/`，可选整合大文件（`merge`）、划分与训练集标准化（`--steps`） |
-| `scripts/smoke_element_forecast.py` | 极少样本合成数据，跑 1 epoch 验证要素基线训练链路 |
+| `scripts/test_element/smoke_element_forecast.py` | 极少样本合成数据，跑 1 epoch 验证要素基线训练链路 |
+| `scripts/test_element/run_element_baseline_train.py` | 要素 ConvLSTM 基线训练（配置见 `configs/baseline/element_forecasting/`） |
 | `scripts/test_element/check_element_forecast_competition.py` | 要素预测比赛检查（单文件模式），支持滚动预测与重叠融合评估 |
-| `scripts/03_train_eddy.py` 等 | 训练/流水线/报告脚本（`03`–`07`）；要素预报用 `python scripts/04_train_forecast.py` |
+| `scripts/03_train_eddy.py` 等 | 训练/流水线/报告脚本（`03`–`07`）；要素预报主模型用 `python scripts/04_train_forecast.py` |
+| `src/web/README.md` | Web 前端（Vue/Vite）、后端 API 与运行方式 |
 | `src/baseline/` | 基线实验代码（`PYTHONPATH=src`，如 `python -m baseline.element_forecasting.train`） |
 | `src/baseline/element_forecasting/README.md` | 要素 ConvLSTM 基线模块与运行方式 |
 | `src/utils/README.md` | 工具说明（logger、dataset_utils、可视化命令行） |
@@ -91,6 +114,11 @@ OceanRace/
 | `outputs/anomaly_detection/merged_chunks/` | 异常检测 `oper/wave` 清洗文件整合后的大文件（可分块） |
 | `outputs/final_results/` | 存放**最终最佳输出结果**（指标、图表等），可提交。下设三模块子目录：`eddy_detection/`、`element_forecasting/`、`anomaly_detection/` |
 | `models/` | 存放**最佳模型**。训练完成后从 `outputs/` 挑选最优 checkpoint，复制到 `models/` 后可提交 |
+
+### Git 与 `.gitignore`（摘要）
+
+- **`data/raw` 大文件、`outputs/` 中间产物、`node_modules/`、虚拟环境** 等默认不提交；**`outputs/final_results/`** 与 **`models/`** 中选定成果可按需提交。
+- **`configs/`** 下任务 YAML 与仓库约定一致，宜随代码版本管理；仅敏感内容使用 `*.secret` 等机制，勿把密钥写入可提交文件。
 
 ---
 

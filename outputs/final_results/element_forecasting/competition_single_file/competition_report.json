@@ -5,8 +5,8 @@
   "dataset": {
     "data_file": "/OceanRace/data/processed/element_forecasting/path.txt",
     "split": "test",
-    "total_windows": 47758,
-    "selected_windows": 7165,
+    "total_windows": 47746,
+    "selected_windows": 2134,
     "single_file_train_ratio": 0.7,
     "single_file_val_ratio": 0.15
   },
@@ -17,28 +17,28 @@
       "ssu",
       "ssv"
     ],
-    "input_steps": 24,
-    "single_shot_output_steps": 24,
+    "input_steps": 72,
+    "single_shot_output_steps": 72,
     "eval_output_steps": 72,
-    "rolling_iterations_estimate": 3,
+    "rolling_iterations_estimate": 1,
     "time_step_hours": 1.0,
     "horizon_hours": 72.0
   },
   "competition_thresholds": {
     "horizon_hours_min": 72.0,
-    "mse_percent_max": 15.0
+    "nrmse_percent_max": 15.0
   },
   "metrics": {
-    "mse": 0.2858618525703653,
-    "rmse": 0.5346605021603572,
-    "mae": 0.26366410528834794,
-    "nse": 0.9984792796758009,
-    "relative_mse_percent": 24.778516609288037
+    "mse": 0.15751533242668367,
+    "rmse": 0.39688201323149386,
+    "mae": 0.1974747591357772,
+    "nse": 0.9991583077930148,
+    "nrmse_percent": 1.0748909043667159
   },
   "pass": {
     "horizon": true,
-    "mse_percent": false,
-    "overall": false
+    "nrmse_percent": true,
+    "overall": true
   },
   "artifacts": {
     "per_horizon_csv": "/OceanRace/outputs/final_results/element_forecasting/competition_single_file/per_horizon_metrics.csv",
@@ -54,7 +54,7 @@
   },
   "notes": [
     "evaluation is single-file only and uses rolling autoregressive forecasting",
-    "relative_mse_percent = sum((pred_std-y_std)^2)/sum(y_std^2)*100 on valid mask",
+    "nrmse_percent = RMSE / (target_max - target_min) * 100 on valid mask",
     "if time_step_hours is not 1, pass --time-step-hours explicitly"
   ]
 }

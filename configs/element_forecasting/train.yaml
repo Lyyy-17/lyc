@@ -1,0 +1,97 @@
+# 水文要素预报主模型训练参数（非基线）
+
+# 变量列表可覆盖 model.yaml；输入变量=输出变量
+var_names:
+  - sst
+  - sss
+  - ssu
+  - ssv
+
+# 数据来源：单一合并文件
+data_file: data/processed/element_forecasting/path.txt
+norm_stats_path: data/processed/normalization/element_forecasting_norm.json
+
+# 滑窗采样与时间切分（赛题固定年份）
+window_stride: 4
+split_mode: competition_years
+split_years:
+  train: [1994, 2013]
+  test: [2014, 2014]
+  val: [2015, 2015]
+
+# 兼容旧逻辑：仅在 split_mode=ratio 时生效
+train_ratio: 0.7
+val_ratio: 0.15
+test_ratio: 0.15
+
+# 数据读取缓存（单文件场景下复用句柄数）
+open_file_lru_size: 2
+
+# 训练超参数
+epochs: 20
+batch_size: 4
+val_batch_size: 1
+lr: 0.0001
+num_workers: 8
+val_num_workers: 0
+device: auto
+amp: true
+grad_accum_steps: 4
+
+# 断点续训
+resume_from: null
+auto_resume_last: false
+
+# Rollout 训练（多步对齐）
+rollout_steps: 1
+rollout_gamma: 1.0
+rollout_detach_between_steps: false
+
+# 验证阶段滚动评估步长（建议与 rollout_steps * output_steps 对齐）
+val_target_steps: 72
+
+# Scheduled Sampling（epsilon: 使用真值作为下一段输入的概率）
+scheduled_sampling_enabled: true
+scheduled_sampling_start_epoch: 1
+scheduled_sampling_epsilon_start: 1.0
+scheduled_sampling_epsilon_min: 0.08
+scheduled_sampling_decay_type: cosine
+
+# 控制台输出控制（减少刷屏）
+progress_bar_enabled: true
+progress_bar_mininterval: 1.5
+progress_bar_leave: false
+
+# 推理重叠融合（抑制 24h/48h 拼接台阶）
+overlap_blend_enabled: true
+overlap_steps: 4
+
+# 损失配置
+loss_main_weight: 1.0
+loss_aux_transformer_weight: 0.2
+loss_spatial_mean_weight: 0.25
+loss_aux_spatial_mean_weight: 0.05
+
+# 空间细节损失
+loss_gradient_consistency_weight: 0.12
+loss_edge_weight: 0.03
+edge_loss_type: sobel
+
+# 区域加权（在线梯度权重）
+region_weighting_enabled: true
+region_weight_base: 1.0
+region_weight_strength: 1.0
+region_weight_quantile: 0.8
+
+# 扩展评估指标
+eval_extended_spatial_metrics: true
+
+# 变量损失权重（抑制 sst 主导，提升 sss/ssv 关注度）
+var_loss_weights:
+  sst: 1.0
+  sss: 1.8
+  ssu: 1.0
+  ssv: 1.8
+
+# 输出目录（中间产物）
+output_dir: outputs/element_forecasting
