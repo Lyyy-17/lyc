@@ -300,8 +300,140 @@ class SpatioTemporalTransformerBranch(nn.Module):
 		return pred
 
 
+class _DoubleConv(nn.Module):
+	"""UNet基础卷积块。"""
+
+	def __init__(self, in_channels: int, out_channels: int) -> None:
+		super().__init__()
+		self.net = nn.Sequential(
+			nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+			nn.BatchNorm2d(out_channels),
+			nn.GELU(),
+			nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+			nn.BatchNorm2d(out_channels),
+			nn.GELU(),
+		)
+
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		return self.net(x)
+
+
+class UNetExpert(nn.Module):
+	"""将输入时间窗展平到通道维度的轻量UNet专家。"""
+
+	def __init__(
+		self,
+		in_channels: int,
+		input_steps: int,
+		output_steps: int,
+		base_channels: int = 48,
+	) -> None:
+		super().__init__()
+		flat_in = int(in_channels * input_steps)
+		self.output_steps = int(output_steps)
+		self.in_channels = int(in_channels)
+
+		c1 = max(16, int(base_channels))
+		c2 = c1 * 2
+		c3 = c2 * 2
+
+		self.enc1 = _DoubleConv(flat_in, c1)
+		self.enc2 = _DoubleConv(c1, c2)
+		self.enc3 = _DoubleConv(c2, c3)
+		self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+		self.up2 = nn.ConvTranspose2d(c3, c2, kernel_size=2, stride=2)
+		self.dec2 = _DoubleConv(c2 + c2, c2)
+		self.up1 = nn.ConvTranspose2d(c2, c1, kernel_size=2, stride=2)
+		self.dec1 = _DoubleConv(c1 + c1, c1)
+		self.head = nn.Conv2d(c1, output_steps * in_channels, kernel_size=1)
+
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		bsz, t_in, ch, h, w = x.shape
+		x2d = x.reshape(bsz, t_in * ch, h, w)
+
+		e1 = self.enc1(x2d)
+		e2 = self.enc2(self.pool(e1))
+		e3 = self.enc3(self.pool(e2))
+
+		d2 = self.up2(e3)
+		if d2.shape[-2:] != e2.shape[-2:]:
+			d2 = F.interpolate(d2, size=e2.shape[-2:], mode="bilinear", align_corners=False)
+		d2 = self.dec2(torch.cat([d2, e2], dim=1))
+
+		d1 = self.up1(d2)
+		if d1.shape[-2:] != e1.shape[-2:]:
+			d1 = F.interpolate(d1, size=e1.shape[-2:], mode="bilinear", align_corners=False)
+		d1 = self.dec1(torch.cat([d1, e1], dim=1))
+
+		out = self.head(d1)
+		return out.view(bsz, self.output_steps, self.in_channels, h, w)
+
+
+class ConvLSTMCell(nn.Module):
+	"""标准ConvLSTM单元。"""
+
+	def __init__(self, input_channels: int, hidden_channels: int, kernel_size: int = 3) -> None:
+		super().__init__()
+		padding = kernel_size // 2
+		self.hidden_channels = int(hidden_channels)
+		self.gates = nn.Conv2d(
+			input_channels + hidden_channels,
+			4 * hidden_channels,
+			kernel_size=kernel_size,
+			padding=padding,
+		)
+
+	def forward(
+		self,
+		x: torch.Tensor,
+		state: tuple[torch.Tensor, torch.Tensor],
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		h_prev, c_prev = state
+		gates = self.gates(torch.cat([x, h_prev], dim=1))
+		i, f, g, o = torch.chunk(gates, 4, dim=1)
+		i = torch.sigmoid(i)
+		f = torch.sigmoid(f)
+		o = torch.sigmoid(o)
+		g = torch.tanh(g)
+		c = f * c_prev + i * g
+		h = o * torch.tanh(c)
+		return h, c
+
+
+class ConvLSTMExpert(nn.Module):
+	"""以ConvLSTM编码输入序列，再解码为多步输出的专家分支。"""
+
+	def __init__(
+		self,
+		in_channels: int,
+		output_steps: int,
+		hidden_channels: int = 64,
+		kernel_size: int = 3,
+	) -> None:
+		super().__init__()
+		self.in_channels = int(in_channels)
+		self.output_steps = int(output_steps)
+		hid = max(16, int(hidden_channels))
+		self.cell = ConvLSTMCell(input_channels=in_channels, hidden_channels=hid, kernel_size=kernel_size)
+		self.head = nn.Sequential(
+			nn.Conv2d(hid, hid, kernel_size=3, padding=1),
+			nn.GELU(),
+			nn.Conv2d(hid, output_steps * in_channels, kernel_size=1),
+		)
+
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		bsz, _, _, h, w = x.shape
+		h_t = x.new_zeros((bsz, self.cell.hidden_channels, h, w))
+		c_t = x.new_zeros((bsz, self.cell.hidden_channels, h, w))
+		for t in range(x.shape[1]):
+			h_t, c_t = self.cell(x[:, t], (h_t, c_t))
+		out = self.head(h_t)
+		return out.view(bsz, self.output_steps, self.in_channels, h, w)
+
+
 class HybridElementForecastModel(nn.Module):
-	"""长时序预测主模型（仅 Transformer 分支）。"""
+	"""长时序预测主模型（Transformer + UNet/ConvLSTM 多专家）。"""
 
 	def __init__(
 		self,
@@ -324,9 +456,17 @@ class HybridElementForecastModel(nn.Module):
 		refine_head_hidden_ratio: float = 1.0,
 		refine_head_num_layers: int = 2,
 		refine_head_residual: bool = True,
+		moe_enabled: bool = False,
+		moe_unet_base_channels: int = 48,
+		moe_convlstm_hidden_channels: int = 64,
+		moe_convlstm_kernel_size: int = 3,
+		moe_transformer_fusion_alpha: float = 0.45,
+		moe_focus_channel_indices: tuple[int, ...] | list[int] | None = None,
+		moe_focus_boost: float = 0.25,
 	) -> None:
 		super().__init__()
 		self.output_steps = output_steps
+		self.in_channels = in_channels
 		self.transformer = SpatioTemporalTransformerBranch(
 			in_channels=in_channels,
 			input_steps=input_steps,
@@ -348,11 +488,64 @@ class HybridElementForecastModel(nn.Module):
 			refine_head_num_layers=refine_head_num_layers,
 			refine_head_residual=refine_head_residual,
 		)
+		self.moe_enabled = bool(moe_enabled)
+		self.moe_transformer_fusion_alpha = float(max(0.0, min(1.0, moe_transformer_fusion_alpha)))
+		self.moe_focus_boost = float(max(0.0, moe_focus_boost))
+		focus_indices = [
+			int(i)
+			for i in (moe_focus_channel_indices or [])
+			if 0 <= int(i) < int(in_channels)
+		]
+		self.moe_focus_channel_indices = tuple(sorted(set(focus_indices)))
+
+		self.unet_expert = None
+		self.convlstm_expert = None
+		self.gate_mlp = None
+		if self.moe_enabled:
+			self.unet_expert = UNetExpert(
+				in_channels=in_channels,
+				input_steps=input_steps,
+				output_steps=output_steps,
+				base_channels=moe_unet_base_channels,
+			)
+			self.convlstm_expert = ConvLSTMExpert(
+				in_channels=in_channels,
+				output_steps=output_steps,
+				hidden_channels=moe_convlstm_hidden_channels,
+				kernel_size=moe_convlstm_kernel_size,
+			)
+			self.gate_mlp = nn.Sequential(
+				nn.Linear(in_channels, max(16, in_channels * 2)),
+				nn.GELU(),
+				nn.Linear(max(16, in_channels * 2), 2),
+			)
 
 	def forward(self, x: torch.Tensor, t0: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
 		pred_transformer = self.transformer(x, t0=t0)
-		pred = pred_transformer
+		pred_unet = pred_transformer
+		pred_convlstm = pred_transformer
+		gate_weights = pred_transformer.new_zeros((pred_transformer.shape[0], 2))
+		if self.moe_enabled and self.unet_expert is not None and self.convlstm_expert is not None and self.gate_mlp is not None:
+			pred_unet = self.unet_expert(x)
+			pred_convlstm = self.convlstm_expert(x)
+			gate_feat = x[:, -1].mean(dim=(-2, -1))
+			gate_logits = self.gate_mlp(gate_feat)
+			gate_weights = torch.softmax(gate_logits, dim=-1)
+			w_unet = gate_weights[:, 0].view(-1, 1, 1, 1, 1)
+			w_convlstm = gate_weights[:, 1].view(-1, 1, 1, 1, 1)
+			pred_experts = (w_unet * pred_unet) + (w_convlstm * pred_convlstm)
+			alpha = self.moe_transformer_fusion_alpha
+			pred = alpha * pred_transformer + (1.0 - alpha) * pred_experts
+			if self.moe_focus_channel_indices and self.moe_focus_boost > 0.0:
+				idx = list(self.moe_focus_channel_indices)
+				delta_focus = (pred_experts - pred_transformer)[:, :, idx]
+				pred[:, :, idx] = pred[:, :, idx] + self.moe_focus_boost * delta_focus
+		else:
+			pred = pred_transformer
 		return {
 			"pred": pred,
 			"pred_transformer": pred_transformer,
+			"pred_unet": pred_unet,
+			"pred_convlstm": pred_convlstm,
+			"moe_gate_weights": gate_weights,
 		}

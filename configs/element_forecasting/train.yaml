@@ -28,7 +28,7 @@ test_ratio: 0.15
 open_file_lru_size: 2
 
 # 训练超参数
-epochs: 20
+epochs: 4
 batch_size: 4
 val_batch_size: 1
 lr: 0.0001
@@ -43,11 +43,12 @@ resume_from: null
 auto_resume_last: false
 
 # Rollout 训练（多步对齐）
-rollout_steps: 1
-rollout_gamma: 1.0
-rollout_detach_between_steps: false
+# 以 24 步块滚动对齐 72 小时目标：24 * 3 = 72
+rollout_steps: 3
+rollout_gamma: 1.2 # 越大越重视后续步骤误差
+rollout_detach_between_steps: false # 是否在每个 rollout 步骤后 detach，抑制梯度传播（更稳定但可能降低长程依赖学习）
 
-# 验证阶段滚动评估步长（建议与 rollout_steps * output_steps 对齐）
+# 验证阶段滚动评估步长（与 72 小时竞赛目标对齐）
 val_target_steps: 72
 
 # Scheduled Sampling（epsilon: 使用真值作为下一段输入的概率）
@@ -69,8 +70,16 @@ overlap_steps: 4
 # 损失配置
 loss_main_weight: 1.0
 loss_aux_transformer_weight: 0.2
+loss_aux_unet_weight: 0.15
+loss_aux_convlstm_weight: 0.15
 loss_spatial_mean_weight: 0.25
 loss_aux_spatial_mean_weight: 0.05
+loss_focus_vars_weight: 0.2
+
+# 与 model.yaml 一致的变量聚焦配置（用于构建通道专项损失）
+moe_focus_vars:
+  - ssu
+  - ssv
 
 # 空间细节损失
 loss_gradient_consistency_weight: 0.12

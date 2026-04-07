@@ -198,8 +198,12 @@ def _rollout_composite_train_style_loss(
 	region_weight_quantile: float,
 	loss_main_weight: float,
 	loss_aux_transformer_weight: float,
+	loss_aux_unet_weight: float,
+	loss_aux_convlstm_weight: float,
 	loss_spatial_mean_weight: float,
 	loss_aux_spatial_mean_weight: float,
+	loss_focus_vars_weight: float,
+	focus_channel_weights: torch.Tensor | None,
 	loss_gradient_consistency_weight: float,
 	loss_edge_weight: float,
 	edge_loss_type: str,
@@ -233,6 +237,8 @@ def _rollout_composite_train_style_loss(
 		out = model(cur_x)
 		pred = out["pred"][:, : y_chunk.shape[1]]
 		pred_transformer = out["pred_transformer"][:, : y_chunk.shape[1]]
+		pred_unet = out["pred_unet"][:, : y_chunk.shape[1]]
+		pred_convlstm = out["pred_convlstm"][:, : y_chunk.shape[1]]
 
 		loss_main = masked_weighted_mse(
 			pred,
@@ -248,8 +254,31 @@ def _rollout_composite_train_style_loss(
 			channel_weights=channel_weights,
 			spatial_weights=spatial_weights,
 		)
+		loss_aux_unet = masked_weighted_mse(
+			pred_unet,
+			y_chunk,
+			y_valid_chunk,
+			channel_weights=channel_weights,
+			spatial_weights=spatial_weights,
+		)
+		loss_aux_convlstm = masked_weighted_mse(
+			pred_convlstm,
+			y_chunk,
+			y_valid_chunk,
+			channel_weights=channel_weights,
+			spatial_weights=spatial_weights,
+		)
 		loss_main_mean = masked_spatial_mean_mse(pred, y_chunk, y_valid_chunk, channel_weights=channel_weights)
 		loss_aux_mean = masked_spatial_mean_mse(pred_transformer, y_chunk, y_valid_chunk, channel_weights=channel_weights)
+		loss_focus = pred.new_zeros((), dtype=pred.dtype)
+		if loss_focus_vars_weight > 0.0 and focus_channel_weights is not None:
+			loss_focus = masked_weighted_mse(
+				pred,
+				y_chunk,
+				y_valid_chunk,
+				channel_weights=focus_channel_weights,
+				spatial_weights=spatial_weights,
+			)
 		loss_grad = masked_gradient_l1(pred, y_chunk, y_valid_chunk)
 		loss_edge = pred.new_zeros((), dtype=pred.dtype)
 		if loss_edge_weight > 0.0:
@@ -258,8 +287,11 @@ def _rollout_composite_train_style_loss(
 		step_loss = (
 			loss_main_weight * loss_main
 			+ loss_aux_transformer_weight * loss_aux
+			+ loss_aux_unet_weight * loss_aux_unet
+			+ loss_aux_convlstm_weight * loss_aux_convlstm
 			+ loss_spatial_mean_weight * loss_main_mean
 			+ loss_aux_spatial_mean_weight * loss_aux_mean
+			+ loss_focus_vars_weight * loss_focus
 			+ loss_gradient_consistency_weight * loss_grad
 			+ loss_edge_weight * loss_edge
 		)
@@ -272,6 +304,62 @@ def _rollout_composite_train_style_loss(
 			cur_x = torch.cat([cur_x.float(), feed], dim=1)[:, -input_steps:].contiguous()
 
 	return rollout_loss / max(weight_sum, 1e-12)
+
+
+def _update_masked_minmax_per_channel(
+	current_min: torch.Tensor,
+	current_max: torch.Tensor,
+	target: torch.Tensor,
+	mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+	valid = mask > 0
+	masked_min = torch.where(valid, target, torch.full_like(target, float("inf")))
+	masked_max = torch.where(valid, target, torch.full_like(target, float("-inf")))
+	batch_min = torch.amin(masked_min, dim=(0, 1, 3, 4)).to(dtype=torch.float64)
+	batch_max = torch.amax(masked_max, dim=(0, 1, 3, 4)).to(dtype=torch.float64)
+	has_valid = torch.any(valid, dim=(0, 1, 3, 4))
+	new_min = torch.where(has_valid, torch.minimum(current_min, batch_min), current_min)
+	new_max = torch.where(has_valid, torch.maximum(current_max, batch_max), current_max)
+	return new_min, new_max
+
+
+def _finalize_per_variable_metrics(
+	*,
+	var_names: tuple[str, ...],
+	sum_sq: torch.Tensor,
+	sum_abs: torch.Tensor,
+	sum_err: torch.Tensor,
+	count: torch.Tensor,
+	target_min: torch.Tensor,
+	target_max: torch.Tensor,
+	eps: float = 1e-12,
+) -> dict[str, dict[str, float]]:
+	metrics: dict[str, dict[str, float]] = {}
+	for i, v in enumerate(var_names):
+		den = float(count[i].item())
+		if den <= eps:
+			metrics[v] = {
+				"mse": float("nan"),
+				"rmse": float("nan"),
+				"mae": float("nan"),
+				"bias": float("nan"),
+				"nrmse_percent": float("nan"),
+			}
+			continue
+		mse_v = float(sum_sq[i].item() / den)
+		rmse_v = float(max(mse_v, 0.0) ** 0.5)
+		mae_v = float(sum_abs[i].item() / den)
+		bias_v = float(sum_err[i].item() / den)
+		range_v = max(float(target_max[i].item() - target_min[i].item()), eps)
+		nrmse_v = (rmse_v / range_v) * 100.0
+		metrics[v] = {
+			"mse": mse_v,
+			"rmse": rmse_v,
+			"mae": mae_v,
+			"bias": bias_v,
+			"nrmse_percent": nrmse_v,
+		}
+	return metrics
 
 
 def run_training(args: argparse.Namespace) -> None:
@@ -394,7 +482,7 @@ def run_training(args: argparse.Namespace) -> None:
 		torch.backends.cudnn.benchmark = True
 		torch.set_float32_matmul_precision("high")
 	rollout_gamma = float(train_cfg.get("rollout_gamma", 1.0))
-	rollout_gamma = max(0.0, min(1.0, rollout_gamma))
+	rollout_gamma = max(0.0, rollout_gamma)
 	val_overlap_blend_enabled = bool(train_cfg.get("overlap_blend_enabled", True))
 	val_overlap_steps = int(train_cfg.get("overlap_steps", 4))
 	rollout_detach_between_steps = bool(train_cfg.get("rollout_detach_between_steps", False))
@@ -438,6 +526,17 @@ def run_training(args: argparse.Namespace) -> None:
 
 	sample = train_ds[0]
 	in_channels = int(sample["x"].shape[1])
+	moe_focus_vars_cfg = model_cfg.get("moe_focus_vars", train_cfg.get("moe_focus_vars", ["ssu", "ssv"]))
+	if isinstance(moe_focus_vars_cfg, str):
+		moe_focus_vars = tuple(v.strip() for v in moe_focus_vars_cfg.split(",") if v.strip())
+	elif isinstance(moe_focus_vars_cfg, (list, tuple)):
+		moe_focus_vars = tuple(str(v).strip() for v in moe_focus_vars_cfg if str(v).strip())
+	else:
+		moe_focus_vars = tuple()
+	moe_focus_indices = tuple(i for i, v in enumerate(var_names) if v in set(moe_focus_vars))
+	model_cfg_export = dict(model_cfg)
+	model_cfg_export["moe_focus_vars"] = list(moe_focus_vars)
+	model_cfg_export["moe_focus_channel_indices"] = list(moe_focus_indices)
 
 	model = HybridElementForecastModel(
 		in_channels=in_channels,
@@ -459,14 +558,24 @@ def run_training(args: argparse.Namespace) -> None:
 		refine_head_hidden_ratio=float(model_cfg.get("refine_head_hidden_ratio", 1.0)),
 		refine_head_num_layers=int(model_cfg.get("refine_head_num_layers", 2)),
 		refine_head_residual=bool(model_cfg.get("refine_head_residual", True)),
+		moe_enabled=bool(model_cfg.get("moe_enabled", False)),
+		moe_unet_base_channels=int(model_cfg.get("moe_unet_base_channels", 48)),
+		moe_convlstm_hidden_channels=int(model_cfg.get("moe_convlstm_hidden_channels", 64)),
+		moe_convlstm_kernel_size=int(model_cfg.get("moe_convlstm_kernel_size", 3)),
+		moe_transformer_fusion_alpha=float(model_cfg.get("moe_transformer_fusion_alpha", 0.45)),
+		moe_focus_channel_indices=moe_focus_indices,
+		moe_focus_boost=float(model_cfg.get("moe_focus_boost", 0.25)),
 	).to(device)
 
 	lr = float(args.lr or train_cfg.get("lr", 1e-4))
 	epochs = int(args.epochs or train_cfg.get("epochs", 10))
 	loss_main_weight = float(train_cfg.get("loss_main_weight", 1.0))
 	loss_aux_transformer_weight = float(train_cfg.get("loss_aux_transformer_weight", 0.2))
+	loss_aux_unet_weight = float(train_cfg.get("loss_aux_unet_weight", 0.15))
+	loss_aux_convlstm_weight = float(train_cfg.get("loss_aux_convlstm_weight", 0.15))
 	loss_spatial_mean_weight = float(train_cfg.get("loss_spatial_mean_weight", 0.2))
 	loss_aux_spatial_mean_weight = float(train_cfg.get("loss_aux_spatial_mean_weight", 0.05))
+	loss_focus_vars_weight = float(train_cfg.get("loss_focus_vars_weight", 0.2))
 	loss_gradient_consistency_weight = float(train_cfg.get("loss_gradient_consistency_weight", 0.0))
 	loss_edge_weight = float(train_cfg.get("loss_edge_weight", 0.0))
 	edge_loss_type = str(train_cfg.get("edge_loss_type", "sobel"))
@@ -484,6 +593,14 @@ def run_training(args: argparse.Namespace) -> None:
 		dtype=torch.float32,
 		device=device,
 	).view(1, 1, -1, 1, 1)
+	focus_channel_weights = None
+	if moe_focus_indices:
+		focus_arr = [1.0 if i in set(moe_focus_indices) else 0.0 for i in range(len(var_names))]
+		focus_channel_weights = torch.tensor(
+			focus_arr,
+			dtype=torch.float32,
+			device=device,
+		).view(1, 1, -1, 1, 1)
 	grad_accum_steps = max(1, int(train_cfg.get("grad_accum_steps", 1)))
 	amp_enabled = bool(train_cfg.get("amp", True)) and str(device).startswith("cuda")
 	amp_device_type = "cuda" if str(device).startswith("cuda") else "cpu"
@@ -492,6 +609,7 @@ def run_training(args: argparse.Namespace) -> None:
 
 	best_val = float("inf")
 	best_val_nrmse_percent = float("inf")
+	best_selection_key = (float("inf"), float("inf"), float("inf"), float("inf"))
 	best_path = ckpt_dir / "hybrid_best.pt"
 	last_path = ckpt_dir / "hybrid_last.pt"
 	history: list[dict[str, float]] = []
@@ -527,16 +645,20 @@ def run_training(args: argparse.Namespace) -> None:
 			scaler.load_state_dict(scaler_state)
 		best_val = float(resume_ckpt.get("best_val_loss", best_val))
 		best_val_nrmse_percent = float(resume_ckpt.get("best_val_nrmse_percent", best_val_nrmse_percent))
+		selection_key_ckpt = resume_ckpt.get("best_selection_key", None)
+		if isinstance(selection_key_ckpt, (list, tuple)) and len(selection_key_ckpt) == 4:
+			best_selection_key = tuple(float(x) for x in selection_key_ckpt)
 		history_ckpt = resume_ckpt.get("history")
 		if isinstance(history_ckpt, list):
 			history = [row for row in history_ckpt if isinstance(row, dict)]
 		start_epoch = int(resume_ckpt.get("epoch", 0)) + 1
 		_log.info(
-			"resume enabled | checkpoint=%s | start_epoch=%d | best_val_loss=%.6f | best_val_nrmse=%.4f%%",
+			"resume enabled | checkpoint=%s | start_epoch=%d | best_val_loss=%.6f | best_val_nrmse=%.4f%% | best_selection_key=%s",
 			resume_path,
 			start_epoch,
 			best_val,
 			best_val_nrmse_percent,
+			str(best_selection_key),
 		)
 		if start_epoch > epochs:
 			_log.warning("resume checkpoint epoch exceeds requested epochs: start_epoch=%d epochs=%d", start_epoch, epochs)
@@ -589,9 +711,14 @@ def run_training(args: argparse.Namespace) -> None:
 		val_num_workers,
 	)
 	_log.debug(
-		"details | open_file_lru_size=%d | var_loss_weights=%s | loss_spatial_mean_weight=%.3f | loss_aux_spatial_mean_weight=%.3f | loss_gradient_consistency_weight=%.3f | loss_edge_weight=%.3f(%s) | region_weighting_enabled=%s(base=%.2f strength=%.2f q=%.2f) | rollout_detach_between_steps=%s | ss_start_epoch=%d | progress_bar_enabled=%s mininterval=%.2f leave=%s",
+		"details | open_file_lru_size=%d | var_loss_weights=%s | moe_focus_vars=%s(idx=%s) | loss_aux_unet_weight=%.3f | loss_aux_convlstm_weight=%.3f | loss_focus_vars_weight=%.3f | loss_spatial_mean_weight=%.3f | loss_aux_spatial_mean_weight=%.3f | loss_gradient_consistency_weight=%.3f | loss_edge_weight=%.3f(%s) | region_weighting_enabled=%s(base=%.2f strength=%.2f q=%.2f) | rollout_detach_between_steps=%s | ss_start_epoch=%d | progress_bar_enabled=%s mininterval=%.2f leave=%s",
 		open_file_lru_size,
 		{v: float(var_loss_weights_cfg.get(v, 1.0)) for v in var_names},
+		list(moe_focus_vars),
+		list(moe_focus_indices),
+		loss_aux_unet_weight,
+		loss_aux_convlstm_weight,
+		loss_focus_vars_weight,
 		loss_spatial_mean_weight,
 		loss_aux_spatial_mean_weight,
 		loss_gradient_consistency_weight,
@@ -662,6 +789,8 @@ def run_training(args: argparse.Namespace) -> None:
 							out = model(cur_x)
 							pred = out["pred"]
 							pred_transformer = out["pred_transformer"]
+							pred_unet = out["pred_unet"]
+							pred_convlstm = out["pred_convlstm"]
 							loss_main = masked_weighted_mse(
 								pred,
 								y_chunk,
@@ -676,8 +805,31 @@ def run_training(args: argparse.Namespace) -> None:
 								channel_weights=channel_weights,
 								spatial_weights=spatial_weights,
 							)
+							loss_aux_unet = masked_weighted_mse(
+								pred_unet,
+								y_chunk,
+								y_valid_chunk,
+								channel_weights=channel_weights,
+								spatial_weights=spatial_weights,
+							)
+							loss_aux_convlstm = masked_weighted_mse(
+								pred_convlstm,
+								y_chunk,
+								y_valid_chunk,
+								channel_weights=channel_weights,
+								spatial_weights=spatial_weights,
+							)
 							loss_main_mean = masked_spatial_mean_mse(pred, y_chunk, y_valid_chunk, channel_weights=channel_weights)
 							loss_aux_mean = masked_spatial_mean_mse(pred_transformer, y_chunk, y_valid_chunk, channel_weights=channel_weights)
+							loss_focus = pred.new_zeros((), dtype=pred.dtype)
+							if loss_focus_vars_weight > 0.0 and focus_channel_weights is not None:
+								loss_focus = masked_weighted_mse(
+									pred,
+									y_chunk,
+									y_valid_chunk,
+									channel_weights=focus_channel_weights,
+									spatial_weights=spatial_weights,
+								)
 							loss_grad = masked_gradient_l1(pred, y_chunk, y_valid_chunk)
 							loss_edge = pred.new_zeros((), dtype=pred.dtype)
 							if loss_edge_weight > 0.0:
@@ -685,8 +837,11 @@ def run_training(args: argparse.Namespace) -> None:
 							step_loss = (
 								loss_main_weight * loss_main
 								+ loss_aux_transformer_weight * loss_aux
+								+ loss_aux_unet_weight * loss_aux_unet
+								+ loss_aux_convlstm_weight * loss_aux_convlstm
 								+ loss_spatial_mean_weight * loss_main_mean
 								+ loss_aux_spatial_mean_weight * loss_aux_mean
+								+ loss_focus_vars_weight * loss_focus
 								+ loss_gradient_consistency_weight * loss_grad
 								+ loss_edge_weight * loss_edge
 							)
@@ -743,6 +898,12 @@ def run_training(args: argparse.Namespace) -> None:
 		val_loss_sum = 0.0
 		val_count = 0
 		val_metrics_sum: dict[str, float] = {}
+		var_count = torch.zeros(len(var_names), dtype=torch.float64, device=device)
+		var_sum_sq = torch.zeros(len(var_names), dtype=torch.float64, device=device)
+		var_sum_abs = torch.zeros(len(var_names), dtype=torch.float64, device=device)
+		var_sum_err = torch.zeros(len(var_names), dtype=torch.float64, device=device)
+		var_target_min = torch.full((len(var_names),), float("inf"), dtype=torch.float64, device=device)
+		var_target_max = torch.full((len(var_names),), float("-inf"), dtype=torch.float64, device=device)
 
 		with torch.no_grad():
 			for batch in val_loader:
@@ -764,8 +925,12 @@ def run_training(args: argparse.Namespace) -> None:
 						region_weight_quantile=region_weight_quantile,
 						loss_main_weight=loss_main_weight,
 						loss_aux_transformer_weight=loss_aux_transformer_weight,
+						loss_aux_unet_weight=loss_aux_unet_weight,
+						loss_aux_convlstm_weight=loss_aux_convlstm_weight,
 						loss_spatial_mean_weight=loss_spatial_mean_weight,
 						loss_aux_spatial_mean_weight=loss_aux_spatial_mean_weight,
+						loss_focus_vars_weight=loss_focus_vars_weight,
+						focus_channel_weights=focus_channel_weights,
 						loss_gradient_consistency_weight=loss_gradient_consistency_weight,
 						loss_edge_weight=loss_edge_weight,
 						edge_loss_type=edge_loss_type,
@@ -797,9 +962,50 @@ def run_training(args: argparse.Namespace) -> None:
 				for k, v in batch_metrics.items():
 					val_metrics_sum[k] = val_metrics_sum.get(k, 0.0) + (v * bs)
 
+				diff = (pred - y).float()
+				m = y_valid.float()
+				var_sum_sq += torch.sum((diff ** 2) * m, dim=(0, 1, 3, 4)).to(dtype=torch.float64)
+				var_sum_abs += torch.sum(torch.abs(diff) * m, dim=(0, 1, 3, 4)).to(dtype=torch.float64)
+				var_sum_err += torch.sum(diff * m, dim=(0, 1, 3, 4)).to(dtype=torch.float64)
+				var_count += torch.sum(m, dim=(0, 1, 3, 4)).to(dtype=torch.float64)
+				var_target_min, var_target_max = _update_masked_minmax_per_channel(
+					var_target_min,
+					var_target_max,
+					target=y.float(),
+					mask=m,
+				)
+
 		val_loss = val_loss_sum / max(val_count, 1)
 		metrics = {k: v / max(val_count, 1) for k, v in val_metrics_sum.items()}
 		metrics["rmse"] = metrics["mse"] ** 0.5
+		var_metrics = _finalize_per_variable_metrics(
+			var_names=var_names,
+			sum_sq=var_sum_sq,
+			sum_abs=var_sum_abs,
+			sum_err=var_sum_err,
+			count=var_count,
+			target_min=var_target_min,
+			target_max=var_target_max,
+		)
+		valid_var_nrmse = [
+			float(v["nrmse_percent"])
+			for v in var_metrics.values()
+			if float(v["nrmse_percent"]) == float(v["nrmse_percent"])
+		]
+		valid_var_bias = [
+			abs(float(v["bias"]))
+			for v in var_metrics.values()
+			if float(v["bias"]) == float(v["bias"])
+		]
+		mean_var_nrmse = float(sum(valid_var_nrmse) / max(len(valid_var_nrmse), 1))
+		max_var_nrmse = float(max(valid_var_nrmse) if valid_var_nrmse else float("inf"))
+		max_abs_var_bias = float(max(valid_var_bias) if valid_var_bias else float("inf"))
+		selection_key = (
+			max_var_nrmse,
+			mean_var_nrmse,
+			max_abs_var_bias,
+			float(metrics["nrmse_percent"]),
+		)
 
 		epoch_record = {
 			"epoch": float(epoch),
@@ -810,7 +1016,13 @@ def run_training(args: argparse.Namespace) -> None:
 			"val_nrmse_percent": float(metrics["nrmse_percent"]),
 			"val_mae": float(metrics["mae"]),
 			"val_nse": float(metrics["nse"]),
+			"val_mean_var_nrmse_percent": mean_var_nrmse,
+			"val_max_var_nrmse_percent": max_var_nrmse,
+			"val_max_abs_var_bias": max_abs_var_bias,
 		}
+		for vname, vstats in var_metrics.items():
+			epoch_record[f"val_nrmse_percent_{vname}"] = float(vstats["nrmse_percent"])
+			epoch_record[f"val_bias_{vname}"] = float(vstats["bias"])
 		if "grad_rmse" in metrics:
 			epoch_record["val_grad_rmse"] = float(metrics["grad_rmse"])
 		if "extreme_error" in metrics:
@@ -820,7 +1032,7 @@ def run_training(args: argparse.Namespace) -> None:
 		history.append(epoch_record)
 		log_msg = (
 			"epoch=%d train_loss=%.6f val_loss=%.6f val_rmse=%.6f val_mae=%.6f "
-			"val_nse=%.6f val_nrmse=%.4f%% ss_epsilon=%.4f"
+			"val_nse=%.6f val_nrmse=%.4f%% var_nrmse(mean/max)=%.4f/%.4f%% max_abs_var_bias=%.6f ss_epsilon=%.4f"
 		)
 		log_args: list[float | int] = [
 			epoch,
@@ -830,6 +1042,9 @@ def run_training(args: argparse.Namespace) -> None:
 			metrics["mae"],
 			metrics["nse"],
 			metrics["nrmse_percent"],
+			mean_var_nrmse,
+			max_var_nrmse,
+			max_abs_var_bias,
 			epsilon,
 		]
 		if "grad_rmse" in metrics:
@@ -848,6 +1063,9 @@ def run_training(args: argparse.Namespace) -> None:
 
 		if metrics["nrmse_percent"] < best_val_nrmse_percent:
 			best_val_nrmse_percent = float(metrics["nrmse_percent"])
+
+		if selection_key < best_selection_key:
+			best_selection_key = selection_key
 			torch.save(
 				{
 					"model_state": model.state_dict(),
@@ -855,11 +1073,24 @@ def run_training(args: argparse.Namespace) -> None:
 					"input_steps": input_steps,
 					"output_steps": model_output_steps,
 					"in_channels": in_channels,
-					"model_config": model_cfg,
+					"model_config": model_cfg_export,
+					"best_selection_key": [float(x) for x in best_selection_key],
+					"best_selection_metrics": {
+						"overall_nrmse_percent": float(metrics["nrmse_percent"]),
+						"mean_var_nrmse_percent": mean_var_nrmse,
+						"max_var_nrmse_percent": max_var_nrmse,
+						"max_abs_var_bias": max_abs_var_bias,
+						"per_variable": var_metrics,
+					},
 				},
 				best_path,
 			)
-			_log.info("new best checkpoint saved by nrmse_percent=%.4f%%: %s", best_val_nrmse_percent, best_path)
+			_log.info(
+				"new best checkpoint saved by selection key=%s (overall_nrmse=%.4f%%): %s",
+				str(best_selection_key),
+				float(metrics["nrmse_percent"]),
+				best_path,
+			)
 
 		torch.save(
 			{
@@ -869,12 +1100,13 @@ def run_training(args: argparse.Namespace) -> None:
 				"scaler_state": scaler.state_dict(),
 				"best_val_loss": float(best_val),
 				"best_val_nrmse_percent": float(best_val_nrmse_percent),
+				"best_selection_key": [float(x) for x in best_selection_key],
 				"history": history,
 				"var_names": list(var_names),
 				"input_steps": input_steps,
 				"output_steps": model_output_steps,
 				"in_channels": in_channels,
-				"model_config": model_cfg,
+				"model_config": model_cfg_export,
 			},
 			last_path,
 		)
@@ -884,9 +1116,10 @@ def run_training(args: argparse.Namespace) -> None:
 		encoding="utf-8",
 	)
 	_log.info(
-		"training done | best_val_loss=%.6f | best_val_nrmse_percent=%.4f%% | checkpoint=%s",
+		"training done | best_val_loss=%.6f | best_val_nrmse_percent=%.4f%% | best_selection_key=%s | checkpoint=%s",
 		best_val,
 		best_val_nrmse_percent,
+		str(best_selection_key),
 		best_path,
 	)
 

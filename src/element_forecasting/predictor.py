@@ -47,6 +47,13 @@ class ElementForecastPredictor:
 			refine_head_hidden_ratio=float(model_cfg.get("refine_head_hidden_ratio", 1.0)),
 			refine_head_num_layers=int(model_cfg.get("refine_head_num_layers", 2)),
 			refine_head_residual=bool(model_cfg.get("refine_head_residual", True)),
+			moe_enabled=bool(model_cfg.get("moe_enabled", False)),
+			moe_unet_base_channels=int(model_cfg.get("moe_unet_base_channels", 48)),
+			moe_convlstm_hidden_channels=int(model_cfg.get("moe_convlstm_hidden_channels", 64)),
+			moe_convlstm_kernel_size=int(model_cfg.get("moe_convlstm_kernel_size", 3)),
+			moe_transformer_fusion_alpha=float(model_cfg.get("moe_transformer_fusion_alpha", 0.45)),
+			moe_focus_channel_indices=model_cfg.get("moe_focus_channel_indices", []),
+			moe_focus_boost=float(model_cfg.get("moe_focus_boost", 0.25)),
 		)
 		self.model.load_state_dict(ckpt["model_state"])
 		self.model.to(self.device)
