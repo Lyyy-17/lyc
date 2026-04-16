@@ -177,11 +177,9 @@ def _default_eddy_paths() -> tuple[str, str]:
             pass
     clean_candidates = [
         "data/processed/eddy_detection/19930101_20241231_clean.nc",
-        "/root/服务外包/服务外包/OceanRace/data/processed/eddy_detection/19930101_20241231_clean.nc",
     ]
     label_candidates = [
         "data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask_bg0.nc",
-        "/root/服务外包/服务外包/OceanRace/data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask_bg0.nc",
     ]
 
     clean_path = clean_candidates[0]

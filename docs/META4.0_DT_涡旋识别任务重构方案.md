@@ -172,7 +172,7 @@
 
 ## 5. 关键结论
 
-- 当前仓库内的 `py-eddy-tracker-master`（若移动到 [OceanRace-main](../../README.md) 根目录下）已具备并实现 handbook 所述核心方法机制。
+- 当前仓库内的 `py-eddy-tracker-master`（若移动到 [OceanRace](../README.md) 根目录下）已具备并实现 handbook 所述核心方法机制。
 - 你的任务应改为：
   - 用 py-eddy-tracker（META4.0 参数化）在唯一源数据 `19930101_20241231_clean.nc` 上生成标准标签；
   - 再基于同一源数据 + 标签，进行时间切分训练 AI 自动化识别与形态分割模块。

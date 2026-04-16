@@ -2,7 +2,7 @@
 
 对象级标签是 META4 识别链路中的中间产物，后续会进一步转换为像素级 mask，并将背景显式修正为 0 供 U-Net 训练。
 
-- 示例文件: /root/服务外包/OceanRace-main/data/processed/eddy_detection/labels/19930101_20241231_objects_meta4.nc
+- 示例文件: data/processed/eddy_detection/labels/19930101_20241231_objects_meta4.nc
 
 | 变量 | 类型 | 维度 | 形状 | 中文说明 |
 |---|---|---|---|---|

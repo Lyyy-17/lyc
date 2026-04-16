@@ -22,7 +22,8 @@ def _default_pet_src() -> Path:
     candidates = [
         ROOT / "py-eddy-tracker-master" / "py-eddy-tracker-master" / "src",
         ROOT / "py-eddy-tracker-master" / "src",
-        Path("/root/服务外包/py-eddy-tracker-master/py-eddy-tracker-master/src"),
+        ROOT.parent / "py-eddy-tracker-master" / "py-eddy-tracker-master" / "src",
+        ROOT.parent / "py-eddy-tracker-master" / "src",
     ]
     for candidate in candidates:
         if candidate.exists():
