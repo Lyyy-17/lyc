@@ -122,11 +122,20 @@ class AnomalyInspectRequest(BaseModel):
     split: str = "test"
     open_file_lru_size: int = 32
     max_points: int = 200
+    recent_window_hours: int = 24
+    snapshot_only: bool = False
+    include_snapshot: bool = False
+    snapshot_index: int | None = None
 
 # In-memory store for the last prediction to serve slices efficiently
 prediction_cache = {}
 eddy_prediction_cache = {}
 anomaly_timestamps_cache: dict[tuple[str, str, str], list[int]] = {}
+anomaly_overview_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
+anomaly_snapshot_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
+ANOMALY_SNAPSHOT_CACHE_MAX = 96
+ANOMALY_OVERVIEW_CACHE_SCHEMA = 2
+anomaly_snapshot_dataset_cache: dict[tuple[str, str, str, str | None], dict[str, Any]] = {}
 
 
 def _to_epoch_seconds(ts_raw: int) -> int:
@@ -157,6 +166,95 @@ def _build_boundary_mask(mask: np.ndarray) -> np.ndarray:
     interior = (center == 1) & (up == 1) & (down == 1) & (left == 1) & (right == 1)
     boundary = (center == 1) & (~interior)
     return boundary.astype(np.uint8)
+
+
+def _masked_mean_and_p95(field: np.ndarray, valid: np.ndarray) -> tuple[float, float]:
+    data = np.asarray(field, dtype=np.float32)
+    mask = np.asarray(valid, dtype=np.float32) >= 0.5
+    if data.shape != mask.shape:
+        mask = np.ones_like(data, dtype=bool)
+    selected = data[mask]
+    if selected.size == 0:
+        selected = data[np.isfinite(data)]
+    if selected.size == 0:
+        return (0.0, 0.0)
+    selected = selected[np.isfinite(selected)]
+    if selected.size == 0:
+        return (0.0, 0.0)
+    return (float(np.mean(selected)), float(np.percentile(selected, 95.0)))
+
+
+def _extract_anomaly_sample_fields(sample: dict[str, Any]) -> dict[str, Any] | None:
+    oper_x = sample.get("oper_x")
+    wave_x = sample.get("wave_x")
+    oper_valid = sample.get("oper_valid")
+    wave_valid = sample.get("wave_valid")
+
+    if not (isinstance(oper_x, torch.Tensor) and isinstance(wave_x, torch.Tensor)):
+        return None
+
+    wind_grid = oper_x[2].detach().cpu().numpy().astype(np.float32)
+    wave_grid = wave_x[0].detach().cpu().numpy().astype(np.float32)
+
+    wind_valid = (
+        oper_valid[2].detach().cpu().numpy().astype(np.float32)
+        if isinstance(oper_valid, torch.Tensor)
+        else np.ones_like(wind_grid, dtype=np.float32)
+    )
+    wave_valid_arr = (
+        wave_valid[0].detach().cpu().numpy().astype(np.float32)
+        if isinstance(wave_valid, torch.Tensor)
+        else np.ones_like(wave_grid, dtype=np.float32)
+    )
+
+    wind_mean, wind_p95 = _masked_mean_and_p95(wind_grid, wind_valid)
+    wave_mean, wave_p95 = _masked_mean_and_p95(wave_grid, wave_valid_arr)
+
+    return {
+        "wind_grid": wind_grid,
+        "wave_grid": wave_grid,
+        "wind_valid": wind_valid,
+        "wave_valid": wave_valid_arr,
+        "wind_mean": wind_mean,
+        "wind_p95": wind_p95,
+        "wave_mean": wave_mean,
+        "wave_p95": wave_p95,
+    }
+
+
+def _get_anomaly_snapshot_dataset(
+    *,
+    processed_dir: str,
+    manifest_path: str,
+    split: str,
+    norm_stats_path: str | None,
+    open_file_lru_size: int,
+) -> AnomalyFrameDataset:
+    key = (processed_dir, manifest_path, split, norm_stats_path)
+    signature = (
+        float(os.path.getmtime(manifest_path)) if os.path.exists(manifest_path) else -1.0,
+        float(os.path.getmtime(norm_stats_path)) if norm_stats_path and os.path.exists(norm_stats_path) else -1.0,
+        int(open_file_lru_size),
+    )
+    cached = anomaly_snapshot_dataset_cache.get(key)
+    if cached is not None and cached.get("signature") == signature and isinstance(cached.get("dataset"), AnomalyFrameDataset):
+        return cached["dataset"]
+
+    if cached is not None and isinstance(cached.get("dataset"), AnomalyFrameDataset):
+        try:
+            cached["dataset"].close()
+        except Exception:
+            pass
+
+    ds = AnomalyFrameDataset(
+        processed_anomaly_dir=processed_dir,
+        split=split,
+        manifest_path=manifest_path,
+        norm_stats_path=norm_stats_path,
+        open_file_lru_size=max(0, int(open_file_lru_size)),
+    )
+    anomaly_snapshot_dataset_cache[key] = {"signature": signature, "dataset": ds}
+    return ds
 
 
 def _default_eddy_paths() -> tuple[str, str]:
@@ -918,36 +1016,42 @@ def inspect_anomaly(req: AnomalyInspectRequest):
     if not os.path.exists(manifest_path):
         raise HTTPException(status_code=404, detail=f"manifest file not found: {manifest_path}")
 
-    try:
-        labels_obj = json.loads(open(labels_path, "r", encoding="utf-8").read())
-        events_obj = json.loads(open(events_path, "r", encoding="utf-8").read())
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"invalid json: {e}")
-
-    if not isinstance(labels_obj, dict):
-        raise HTTPException(status_code=400, detail="labels_json must be an object with split keys")
-
-    split_labels_raw = labels_obj.get(split)
-    if not isinstance(split_labels_raw, list):
-        raise HTTPException(status_code=400, detail=f"labels_json missing list for split={split}")
-
-    labels = [1 if int(v) == 1 else 0 for v in split_labels_raw]
-
+    labels: list[int] = []
+    split_labels_raw: list[int] = []
     events: list[dict] = []
-    if isinstance(events_obj, list):
-        for ev in events_obj:
-            if not isinstance(ev, dict):
-                continue
-            if "start" not in ev or "end" not in ev:
-                continue
-            try:
-                start = int(ev["start"])
-                end = int(ev["end"])
-            except Exception:
-                continue
-            if end < start:
-                continue
-            events.append({"name": str(ev.get("name", "event")), "start": start, "end": end})
+    labels_mtime = float(os.path.getmtime(labels_path))
+    events_mtime = float(os.path.getmtime(events_path))
+    manifest_mtime = float(os.path.getmtime(manifest_path))
+    if not bool(req.snapshot_only):
+        try:
+            labels_obj = json.loads(open(labels_path, "r", encoding="utf-8").read())
+            events_obj = json.loads(open(events_path, "r", encoding="utf-8").read())
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"invalid json: {e}")
+
+        if not isinstance(labels_obj, dict):
+            raise HTTPException(status_code=400, detail="labels_json must be an object with split keys")
+
+        split_labels_raw = labels_obj.get(split)
+        if not isinstance(split_labels_raw, list):
+            raise HTTPException(status_code=400, detail=f"labels_json missing list for split={split}")
+
+        labels = [1 if int(v) == 1 else 0 for v in split_labels_raw]
+
+        if isinstance(events_obj, list):
+            for ev in events_obj:
+                if not isinstance(ev, dict):
+                    continue
+                if "start" not in ev or "end" not in ev:
+                    continue
+                try:
+                    start = int(ev["start"])
+                    end = int(ev["end"])
+                except Exception:
+                    continue
+                if end < start:
+                    continue
+                events.append({"name": str(ev.get("name", "event")), "start": start, "end": end})
 
     cache_key = (processed_dir, manifest_path, split)
     cached_timestamps = anomaly_timestamps_cache.get(cache_key)
@@ -967,6 +1071,10 @@ def inspect_anomaly(req: AnomalyInspectRequest):
     else:
         timestamps = cached_timestamps
 
+    if bool(req.snapshot_only):
+        labels = [0 for _ in timestamps]
+        split_labels_raw = labels
+
     n_pair = min(len(labels), len(timestamps))
     if n_pair == 0:
         raise HTTPException(status_code=400, detail="empty split after loading labels/timestamps")
@@ -981,44 +1089,186 @@ def inspect_anomaly(req: AnomalyInspectRequest):
             return []
         return [ev["name"] for ev in events if ev["start"] <= ts <= ev["end"]]
 
-    positive_points: list[dict] = []
-    matched_positive = 0
-    matched_event_names: set[str] = set()
-
-    for idx, (y, ts) in enumerate(zip(labels, timestamps)):
-        if y != 1:
-            continue
-        hits = _hit_events(ts)
-        if hits:
-            matched_positive += 1
-            matched_event_names.update(hits)
-        positive_points.append(
-            {
-                "index": idx,
-                "timestamp": ts,
-                "event_hits": hits,
-                "matched": bool(hits),
-            }
-        )
-
     max_points = max(1, int(req.max_points))
-    preview = positive_points[:max_points]
+    window_hours = max(1, int(req.recent_window_hours))
+    latest_timestamp = int(timestamps[-1]) if timestamps else -1
 
-    curve = state["curve"]
-    has_truth = bool(state.get("has_truth", False))
-    return {
-        "split": split,
-        "num_samples": n_pair,
-        "num_positive": int(sum(labels)),
-        "positive_ratio": float(sum(labels) / n_pair),
-        "num_events": len(events),
-        "matched_positive": matched_positive,
-        "matched_positive_ratio": float(matched_positive / max(1, sum(labels))),
-        "matched_event_count": len(matched_event_names),
-        "points": preview,
-        "truncated": len(positive_points) > len(preview),
-        "labels_timestamps_aligned": len(split_labels_raw) == len(timestamps),
-    }
+    if bool(req.snapshot_only):
+        base_response = {
+            "split": split,
+            "num_samples": n_pair,
+            "num_positive": 0,
+            "positive_ratio": 0.0,
+            "num_events": 0,
+            "matched_positive": 0,
+            "matched_positive_ratio": 0.0,
+            "matched_event_count": 0,
+            "points": [],
+            "latest_timestamp": latest_timestamp,
+            "recent_window_hours": window_hours,
+            "recent_window": [],
+            "truncated": False,
+            "labels_timestamps_aligned": True,
+        }
+    else:
+        overview_cache_key = (
+            ANOMALY_OVERVIEW_CACHE_SCHEMA,
+            labels_path,
+            events_path,
+            manifest_path,
+            processed_dir,
+            norm_stats_path if os.path.exists(norm_stats_path) else None,
+            split,
+            n_pair,
+            max_points,
+            window_hours,
+            labels_mtime,
+            events_mtime,
+            manifest_mtime,
+            int(timestamps[-1]) if timestamps else -1,
+        )
+        cached_overview = anomaly_overview_cache.get(overview_cache_key)
+        if cached_overview is not None:
+            base_response = dict(cached_overview)
+        else:
+            positive_points: list[dict] = []
+            matched_positive = 0
+            matched_event_names: set[str] = set()
+
+            for idx, (y, ts) in enumerate(zip(labels, timestamps)):
+                if y != 1:
+                    continue
+                hits = _hit_events(ts)
+                if hits:
+                    matched_positive += 1
+                    matched_event_names.update(hits)
+                positive_points.append(
+                    {
+                        "index": idx,
+                        "timestamp": ts,
+                        "event_hits": hits,
+                        "matched": bool(hits),
+                    }
+                )
+
+            preview = positive_points[:max_points]
+            window_start = latest_timestamp - window_hours * 3600
+            recent_window: list[dict] = []
+            for idx in range(n_pair - 1, -1, -1):
+                ts = int(timestamps[idx])
+                if ts < window_start and recent_window:
+                    break
+                hits = _hit_events(ts)
+                recent_window.append(
+                    {
+                        "index": idx,
+                        "timestamp": ts,
+                        "label": int(labels[idx]),
+                        "event_hits": hits,
+                        "matched": bool(hits),
+                    }
+                )
+            recent_window.reverse()
+
+            # Attach true observed wind/wave summary for each point in the recent window.
+            # Frontend can then compare label and real signal directly.
+            if recent_window:
+                ds_recent = _get_anomaly_snapshot_dataset(
+                    processed_dir=processed_dir,
+                    manifest_path=manifest_path,
+                    split=split,
+                    norm_stats_path=norm_stats_path if os.path.exists(norm_stats_path) else None,
+                    open_file_lru_size=max(8, int(req.open_file_lru_size)),
+                )
+                for row in recent_window:
+                    try:
+                        idx = int(row.get("index", -1))
+                        if idx < 0:
+                            continue
+                        sample = ds_recent[idx]
+                        fields = _extract_anomaly_sample_fields(sample)
+                        if not fields:
+                            continue
+                        row["wind_mean"] = float(fields["wind_mean"])
+                        row["wind_p95"] = float(fields["wind_p95"])
+                        row["wave_mean"] = float(fields["wave_mean"])
+                        row["wave_p95"] = float(fields["wave_p95"])
+                    except Exception:
+                        continue
+
+            base_response = {
+                "split": split,
+                "num_samples": n_pair,
+                "num_positive": int(sum(labels)),
+                "positive_ratio": float(sum(labels) / n_pair),
+                "num_events": len(events),
+                "matched_positive": matched_positive,
+                "matched_positive_ratio": float(matched_positive / max(1, sum(labels))),
+                "matched_event_count": len(matched_event_names),
+                "points": preview,
+                "latest_timestamp": latest_timestamp,
+                "recent_window_hours": window_hours,
+                "recent_window": recent_window,
+                "truncated": len(positive_points) > len(preview),
+                "labels_timestamps_aligned": len(split_labels_raw) == len(timestamps),
+            }
+            anomaly_overview_cache[overview_cache_key] = dict(base_response)
+
+    snapshot = None
+    if bool(req.include_snapshot) and n_pair > 0:
+        if req.snapshot_index is not None:
+            snap_idx = max(0, min(int(req.snapshot_index), n_pair - 1))
+        else:
+            # Prefer a positive sample for easier anomaly visualization.
+            snap_idx = next((i for i, y in enumerate(labels) if int(y) == 1), n_pair // 2)
+
+        snapshot_cache_key = (
+            processed_dir,
+            manifest_path,
+            split,
+            norm_stats_path if os.path.exists(norm_stats_path) else None,
+            manifest_mtime,
+            int(snap_idx),
+        )
+        cached_snapshot = anomaly_snapshot_cache.get(snapshot_cache_key)
+        if cached_snapshot is not None:
+            snapshot = cached_snapshot
+        else:
+            ds_snap = _get_anomaly_snapshot_dataset(
+                processed_dir=processed_dir,
+                manifest_path=manifest_path,
+                split=split,
+                norm_stats_path=norm_stats_path if os.path.exists(norm_stats_path) else None,
+                open_file_lru_size=max(8, int(req.open_file_lru_size)),
+            )
+            try:
+                sample = ds_snap[snap_idx]
+                fields = _extract_anomaly_sample_fields(sample)
+                if fields:
+                    snapshot = {
+                        "index": int(snap_idx),
+                        "timestamp": int(timestamps[snap_idx]) if snap_idx < len(timestamps) else -1,
+                        "wind_speed": np.nan_to_num(fields["wind_grid"], nan=0.0).tolist(),
+                        "wave_swh": np.nan_to_num(fields["wave_grid"], nan=0.0).tolist(),
+                        "wind_valid": np.nan_to_num(fields["wind_valid"], nan=0.0).tolist(),
+                        "wave_valid": np.nan_to_num(fields["wave_valid"], nan=0.0).tolist(),
+                        "wind_mean": float(fields["wind_mean"]),
+                        "wind_p95": float(fields["wind_p95"]),
+                        "wave_mean": float(fields["wave_mean"]),
+                        "wave_p95": float(fields["wave_p95"]),
+                    }
+            except Exception:
+                snapshot = None
+
+            if snapshot is not None:
+                anomaly_snapshot_cache[snapshot_cache_key] = snapshot
+                if len(anomaly_snapshot_cache) > ANOMALY_SNAPSHOT_CACHE_MAX:
+                    oldest_key = next(iter(anomaly_snapshot_cache))
+                    anomaly_snapshot_cache.pop(oldest_key, None)
+
+    response = dict(base_response)
+    response["snapshot"] = snapshot
+    return response
 
 
 @app.get("/api/eddy/predict/{session_id}/boundary-image/{step_idx}")

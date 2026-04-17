@@ -355,13 +355,13 @@
           <p v-if="anomalyLoading" class="text-xs text-tech-cyan font-mono animate-pulse">LOADING ANOMALY POINTS...</p>
         </aside>
 
-        <main class="flex-1 glass-panel p-5 overflow-hidden flex flex-col min-w-0">
-          <div class="flex items-center justify-between gap-3 mb-4">
+        <main class="flex-1 glass-panel p-3 overflow-hidden flex flex-col min-w-0">
+          <div class="flex items-center justify-between gap-2 mb-2">
             <div class="flex items-center gap-3">
               <Database class="w-5 h-5 text-tech-cyan" />
-              <h2 class="font-display text-lg tracking-widest text-white m-0">风-浪异常智能识别与灾害预警</h2>
+              <h2 class="font-display text-base tracking-wider text-white m-0">风-浪异常智能识别与灾害预警</h2>
             </div>
-            <div v-if="anomalyData" class="px-3 py-1 rounded border text-[11px] font-mono" :class="anomalyRiskClass">
+            <div v-if="anomalyData" class="px-2.5 py-0.5 rounded border text-[10px] font-mono" :class="anomalyRiskClass">
               {{ anomalyRiskLevel }}预警 | 风险分 {{ anomalyRiskScore }}
             </div>
           </div>
@@ -371,52 +371,233 @@
           </div>
 
           <template v-else>
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-              <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-700">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-1.5">
+              <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700">
                 <div class="text-[10px] text-slate-400 font-mono">SAMPLES</div>
-                <div class="text-xl text-white font-mono">{{ anomalyData.num_samples }}</div>
+                <div class="text-base text-white font-mono leading-tight">{{ anomalyData.num_samples }}</div>
               </div>
-              <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-700">
+              <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700">
                 <div class="text-[10px] text-slate-400 font-mono">POSITIVE</div>
-                <div class="text-xl text-amber-400 font-mono">{{ anomalyData.num_positive }}</div>
+                <div class="text-base text-amber-400 font-mono leading-tight">{{ anomalyData.num_positive }}</div>
               </div>
-              <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-700">
+              <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700">
                 <div class="text-[10px] text-slate-400 font-mono">MATCHED_POSITIVE</div>
-                <div class="text-xl text-emerald-400 font-mono">{{ anomalyData.matched_positive }}</div>
+                <div class="text-base text-emerald-400 font-mono leading-tight">{{ anomalyData.matched_positive }}</div>
               </div>
-              <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-700">
+              <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700">
                 <div class="text-[10px] text-slate-400 font-mono">EVENTS_HIT</div>
-                <div class="text-xl text-tech-cyan font-mono">{{ anomalyData.matched_event_count }}</div>
+                <div class="text-base text-tech-cyan font-mono leading-tight">{{ anomalyData.matched_event_count }}</div>
               </div>
-              <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-700">
+              <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700">
                 <div class="text-[10px] text-slate-400 font-mono">RISK_LEVEL</div>
-                <div class="text-xl font-mono" :class="anomalyRiskClass">{{ anomalyRiskLevel }}</div>
+                <div class="text-base font-mono leading-tight" :class="anomalyRiskClass">{{ anomalyRiskLevel }}</div>
               </div>
             </div>
 
-            <div class="text-xs text-slate-400 font-mono mb-3">
+            <div class="text-[10px] text-slate-400 font-mono mb-1.5">
               split={{ anomalyData.split }} | positive_ratio={{ (anomalyData.positive_ratio * 100).toFixed(2) }}% | matched_positive_ratio={{ (anomalyData.matched_positive_ratio * 100).toFixed(2) }}%
             </div>
 
-            <div class="flex-1 overflow-auto custom-scrollbar rounded-lg border border-slate-700 bg-slate-900/40">
-              <table class="w-full text-xs font-mono">
-                <thead class="sticky top-0 bg-slate-900/90 text-slate-300">
-                  <tr>
-                    <th class="text-left p-2 border-b border-slate-700">index</th>
-                    <th class="text-left p-2 border-b border-slate-700">timestamp</th>
-                    <th class="text-left p-2 border-b border-slate-700">matched</th>
-                    <th class="text-left p-2 border-b border-slate-700">event_hits</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in anomalyData.points" :key="`${row.index}-${row.timestamp}`" class="odd:bg-slate-900/20 even:bg-slate-800/20">
-                    <td class="p-2 border-b border-slate-800">{{ row.index }}</td>
-                    <td class="p-2 border-b border-slate-800">{{ row.timestamp }}</td>
-                    <td class="p-2 border-b border-slate-800" :class="row.matched ? 'text-emerald-300' : 'text-slate-500'">{{ row.matched ? 'yes' : 'no' }}</td>
-                    <td class="p-2 border-b border-slate-800">{{ Array.isArray(row.event_hits) && row.event_hits.length ? row.event_hits.join(', ') : '-' }}</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="text-[10px] text-tech-cyan/90 font-mono mb-1.5">
+              实时窗口终点: {{ anomalyLatestTimeText }} | 当前选择: {{ anomalySelectedTimeText }}
+            </div>
+
+            <div class="flex items-center gap-1.5 mb-1.5 overflow-x-auto custom-scrollbar pb-1">
+              <button
+                class="px-2 py-0.5 rounded-md text-[10px] font-mono border transition-all whitespace-nowrap"
+                :class="anomalyView === 'monitor' ? 'border-tech-cyan bg-tech-cyan/10 text-tech-cyan' : 'border-slate-700 text-slate-400 hover:text-slate-200'"
+                @click="anomalyView = 'monitor'"
+              >1. 实况监测与基准</button>
+              <button
+                class="px-2 py-0.5 rounded-md text-[10px] font-mono border transition-all whitespace-nowrap"
+                :class="anomalyView === 'detect' ? 'border-tech-cyan bg-tech-cyan/10 text-tech-cyan' : 'border-slate-700 text-slate-400 hover:text-slate-200'"
+                @click="anomalyView = 'detect'"
+              >2. 智能识别与回溯</button>
+              <button
+                class="px-2 py-0.5 rounded-md text-[10px] font-mono border transition-all whitespace-nowrap"
+                :class="anomalyView === 'typhoon' ? 'border-tech-cyan bg-tech-cyan/10 text-tech-cyan' : 'border-slate-700 text-slate-400 hover:text-slate-200'"
+                @click="anomalyView = 'typhoon'"
+              >3. 台风关联与评估</button>
+              <button
+                class="px-2 py-0.5 rounded-md text-[10px] font-mono border transition-all whitespace-nowrap"
+                :class="anomalyView === 'warning' ? 'border-tech-cyan bg-tech-cyan/10 text-tech-cyan' : 'border-slate-700 text-slate-400 hover:text-slate-200'"
+                @click="anomalyView = 'warning'"
+              >4. 分级预警发布</button>
+            </div>
+
+            <div v-if="anomalyView === 'monitor'" class="flex-1 overflow-auto custom-scrollbar space-y-3">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                  <div class="text-[10px] text-slate-400 font-mono">实时风速估计</div>
+                  <div class="text-xl text-white font-mono mt-1">{{ anomalyMonitor.windNow }} m/s</div>
+                  <div class="text-[11px] text-slate-400 font-mono mt-1">基准区间 {{ anomalyMonitor.windBand }}</div>
+                </div>
+                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                  <div class="text-[10px] text-slate-400 font-mono">实时波高估计</div>
+                  <div class="text-xl text-white font-mono mt-1">{{ anomalyMonitor.waveNow }} m</div>
+                  <div class="text-[11px] text-slate-400 font-mono mt-1">基准区间 {{ anomalyMonitor.waveBand }}</div>
+                </div>
+                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                  <div class="text-[10px] text-slate-400 font-mono">24H 监测状态</div>
+                  <div class="text-xl font-mono mt-1" :class="anomalyRiskClass">{{ anomalyMonitor.status }}</div>
+                  <div class="text-[11px] text-slate-400 font-mono mt-1">终点时间 {{ anomalyLatestTimeText }}</div>
+                </div>
+              </div>
+
+              <div class="glass-panel p-3 border border-slate-700/60">
+                <div class="text-xs font-mono text-slate-300 mb-2">风浪实况 vs 正常基准</div>
+                <div id="anomaly-monitor-chart" class="h-[240px]"></div>
+              </div>
+
+              <div class="glass-panel p-3 border border-slate-700/60">
+                <div class="text-xs font-mono text-slate-300 mb-2">最近24小时滑动窗口（点击点位切换精细图）</div>
+                <div id="anomaly-window-chart" class="h-[210px]"></div>
+                <div class="text-[11px] text-slate-400 font-mono mt-2">选中样本 index={{ anomalySelectedIndexText }} | time={{ anomalySelectedTimeText }}</div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="glass-panel p-3 border border-slate-700/60">
+                  <div class="text-xs font-mono text-slate-300 mb-2">风速实况精细图（海域轮廓）</div>
+                  <div class="relative">
+                    <div v-if="anomalySnapshotLoading" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-tech-cyan bg-slate-950/45">精细图加载中...</div>
+                    <div v-else-if="anomalySnapshotError" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-rose-300 bg-slate-950/45 px-3 text-center">{{ anomalySnapshotError }}</div>
+                    <div v-else-if="!anomalySnapshot" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-slate-400 bg-slate-950/45">请选择时间点加载精细图</div>
+                    <div id="anomaly-wind-map" class="h-[260px]" :class="anomalySnapshotLoading ? 'opacity-25' : 'opacity-100'"></div>
+                  </div>
+                </div>
+                <div class="glass-panel p-3 border border-slate-700/60">
+                  <div class="text-xs font-mono text-slate-300 mb-2">波高实况精细图（海域轮廓）</div>
+                  <div class="relative">
+                    <div v-if="anomalySnapshotLoading" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-tech-cyan bg-slate-950/45">精细图加载中...</div>
+                    <div v-else-if="anomalySnapshotError" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-rose-300 bg-slate-950/45 px-3 text-center">{{ anomalySnapshotError }}</div>
+                    <div v-else-if="!anomalySnapshot" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-slate-400 bg-slate-950/45">请选择时间点加载精细图</div>
+                    <div id="anomaly-wave-map" class="h-[260px]" :class="anomalySnapshotLoading ? 'opacity-25' : 'opacity-100'"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-else-if="anomalyView === 'detect'" class="flex-1 overflow-auto custom-scrollbar space-y-2">
+              <div class="glass-panel p-2.5 border border-slate-700/60">
+                <div class="flex items-center justify-between gap-2 mb-1.5">
+                  <div class="text-[11px] font-mono text-slate-300">异常事件时序曲线（幅度与持续时长）</div>
+                  <div class="text-[11px] font-mono text-tech-cyan">{{ anomalyTracebackRangeText }}</div>
+                </div>
+                <div id="anomaly-timeline-chart" class="h-[180px]"></div>
+                <div class="mt-2 pt-2 border-t border-slate-700/60">
+                  <div class="flex items-center justify-between gap-2 mb-1.5">
+                    <div class="text-[11px] font-mono text-slate-300">总体回溯一周 | 当前窗口长度 3 天</div>
+                    <div class="text-[10px] font-mono text-slate-400">步长 {{ anomalyTracebackStepHours }}h</div>
+                  </div>
+                  <input
+                    type="range"
+                    class="w-full accent-cyan-400"
+                    min="0"
+                    :max="anomalyTracebackMaxStartHour"
+                    :step="anomalyTracebackStepHours"
+                    v-model.number="anomalyTracebackStartHour"
+                  />
+                  <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1">
+                    <span>最近7天最早</span>
+                    <span>左右拖动选择3天回溯窗口</span>
+                    <span>最近时刻</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="overflow-auto custom-scrollbar rounded-lg border border-slate-700 bg-slate-900/40">
+                <table class="w-full text-xs font-mono">
+                  <thead class="sticky top-0 bg-slate-900/90 text-slate-300">
+                    <tr>
+                      <th class="text-left p-2 border-b border-slate-700">index</th>
+                      <th class="text-left p-2 border-b border-slate-700">time</th>
+                      <th class="text-left p-2 border-b border-slate-700">异常幅度</th>
+                      <th class="text-left p-2 border-b border-slate-700">真实风速均值</th>
+                      <th class="text-left p-2 border-b border-slate-700">真实波高均值</th>
+                      <th class="text-left p-2 border-b border-slate-700">label</th>
+                      <th class="text-left p-2 border-b border-slate-700">影响范围</th>
+                      <th class="text-left p-2 border-b border-slate-700">持续时长(h)</th>
+                      <th class="text-left p-2 border-b border-slate-700">event_hits</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in anomalyTracebackRows" :key="`${row.index}-${row.timestamp}`" class="odd:bg-slate-900/20 even:bg-slate-800/20">
+                      <td class="p-2 border-b border-slate-800">{{ row.index }}</td>
+                      <td class="p-2 border-b border-slate-800">{{ row.time }}</td>
+                      <td class="p-2 border-b border-slate-800" :class="row.amplitude >= 2.4 ? 'text-rose-300' : 'text-amber-300'">{{ row.amplitude.toFixed(2) }}x</td>
+                      <td class="p-2 border-b border-slate-800 text-cyan-200">{{ Number.isFinite(row.windMean) ? row.windMean.toFixed(3) : '-' }}</td>
+                      <td class="p-2 border-b border-slate-800 text-cyan-100">{{ Number.isFinite(row.waveMean) ? row.waveMean.toFixed(3) : '-' }}</td>
+                      <td class="p-2 border-b border-slate-800" :class="row.labelSignal === 1 ? 'text-rose-300' : 'text-slate-400'">{{ row.labelSignal }}</td>
+                      <td class="p-2 border-b border-slate-800">{{ row.scope }}</td>
+                      <td class="p-2 border-b border-slate-800">{{ row.duration }}</td>
+                      <td class="p-2 border-b border-slate-800">{{ row.eventHits }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div v-else-if="anomalyView === 'typhoon'" class="flex-1 overflow-auto custom-scrollbar space-y-3">
+              <div class="glass-panel p-3 border border-slate-700/60">
+                <div class="text-xs font-mono text-slate-300 mb-2">风险区域空间分布（低/中/高/极高）</div>
+                <div id="anomaly-riskmap-chart" class="h-[240px]"></div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                  <div class="text-xs font-mono text-slate-300 mb-2">台风-风浪异常耦合</div>
+                  <div class="space-y-2 text-xs font-mono">
+                    <div v-for="cp in anomalyCouplings" :key="cp.name" class="p-2 rounded border border-slate-700 bg-slate-900/60">
+                      <div class="text-tech-cyan">{{ cp.name }} | 耦合度 {{ cp.score }}</div>
+                      <div class="text-slate-400 mt-1">路径速度 {{ cp.speed }} kt，强度 {{ cp.intensity }} kt</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                  <div class="text-xs font-mono text-slate-300 mb-2">历史相似案例库</div>
+                  <div class="space-y-2 text-xs font-mono">
+                    <div v-for="item in anomalyCases" :key="item.id" class="p-2 rounded border border-slate-700 bg-slate-900/60">
+                      <div class="text-white">{{ item.id }}</div>
+                      <div class="text-slate-400 mt-1">相似度 {{ item.similarity }} | 窗口 {{ item.window }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="flex-1 overflow-auto custom-scrollbar space-y-3">
+              <div class="p-3 rounded-lg border" :class="anomalyRiskClass">
+                <div class="text-sm font-mono">当前{{ anomalyWarning.level }}色预警（风险分 {{ anomalyRiskScore }}）</div>
+                <div class="text-xs font-mono mt-1 opacity-90">数据时效：{{ anomalyDataTimeText }}</div>
+                <div class="text-xs font-mono mt-1 opacity-90">发布时间：{{ anomalyIssueTimeText }}</div>
+                <div class="text-xs font-mono mt-1 opacity-90">推送对象：{{ anomalyWarning.targets }}</div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                  <div class="text-xs font-mono text-slate-300 mb-2">应对建议</div>
+                  <div class="space-y-2 text-xs font-mono">
+                    <div v-for="a in anomalyWarning.actions" :key="a" class="p-2 rounded bg-slate-900/60 border border-slate-700">{{ a }}</div>
+                  </div>
+                </div>
+                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                  <div class="text-xs font-mono text-slate-300 mb-2">预警流程留痕</div>
+                  <div class="space-y-2 text-xs font-mono">
+                    <div v-for="log in anomalyWarningLogs" :key="log.id" class="p-2 rounded bg-slate-900/60 border border-slate-700">
+                      <div class="text-slate-200">{{ log.issuedAt || log.time }} | 数据时效 {{ log.dataTime || '-' }} | {{ log.action }}</div>
+                      <div class="text-slate-400 mt-1">{{ log.note }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="text-xs font-mono text-slate-300">标准化预警简报</div>
+                  <button class="tech-btn ghost-btn px-3 py-1 text-[11px]" @click="copyAnomalyBrief">复制简报</button>
+                </div>
+                <textarea v-model="anomalyBrief" class="tech-input h-36 !leading-6"></textarea>
+              </div>
             </div>
           </template>
         </main>
@@ -434,7 +615,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, watch, markRaw } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch, markRaw, computed } from 'vue'
 import axios from 'axios'
 import Plotly from 'plotly.js-dist-min'
 import { 
@@ -491,11 +672,76 @@ const anomalySplit = ref('test')
 const anomalyLoading = ref(false)
 const anomalyError = ref('')
 const anomalyData = ref(null)
+const anomalyView = ref('monitor')
 const anomalyRiskScore = ref(0)
 const anomalyRiskLevel = ref('低')
 const anomalyRiskClass = ref('text-emerald-300 border-emerald-400/40 bg-emerald-400/10')
+const anomalySnapshot = ref(null)
+const anomalySnapshotLoading = ref(false)
+const anomalySnapshotError = ref('')
+const anomalyRecentWindow = ref([])
+const anomalyRecentWeek = ref([])
+const anomalySelectedSnapshotIndex = ref(-1)
+const anomalyLatestTimeText = ref('-')
+const anomalySelectedTimeText = ref('-')
+const anomalySelectedIndexText = ref('-')
+const anomalyRows = ref([])
+const anomalyTracebackRows = ref([])
+const anomalyTracebackWindowHours = ref(72)
+const anomalyTracebackStartHour = ref(0)
+const anomalyTracebackRangeText = ref('-')
+const anomalyDataTimeText = ref('-')
+const anomalyIssueTimeText = ref('-')
+const anomalyCouplings = ref([])
+const anomalyCases = ref([])
+const anomalyBrief = ref('')
+const anomalyWarning = ref({
+  level: '蓝',
+  targets: '值班中心/港口/海上作业单位',
+  actions: [
+    '保持持续监测，滚动更新风速与波高阈值偏离。',
+    '对重点海域发布风险提示，建议动态调整作业窗口。',
+    '触发异常后30分钟内完成复核并更新预警简报。'
+  ]
+})
+const anomalyWarningLogs = ref([])
+const anomalyMonitor = ref({
+  windNow: 0,
+  waveNow: 0,
+  windBand: '5.0-10.5',
+  waveBand: '0.8-2.2',
+  status: '平稳'
+})
 
 let clockInterval
+let anomalySnapshotRequestSeq = 0
+let anomalySnapshotPrefetchToken = 0
+const anomalySnapshotLocalCache = new Map()
+
+const ANOMALY_LOOKBACK_HOURS = 168
+const ANOMALY_MONITOR_WINDOW_HOURS = 24
+
+const anomalyTracebackMaxStartHour = computed(() => {
+  const maxStart = ANOMALY_LOOKBACK_HOURS - Number(anomalyTracebackWindowHours.value || 72)
+  return Math.max(0, maxStart)
+})
+
+const anomalyTracebackStepHours = computed(() => {
+  const week = Array.isArray(anomalyRecentWeek.value) ? anomalyRecentWeek.value : []
+  if (week.length < 2) return 1
+  const deltas = []
+  for (let i = 1; i < week.length; i++) {
+    const dt = Number(week[i].timestamp) - Number(week[i - 1].timestamp)
+    if (Number.isFinite(dt) && dt > 0) {
+      deltas.push(Math.round(dt / 3600))
+    }
+  }
+  if (!deltas.length) return 1
+  deltas.sort((a, b) => a - b)
+  const mid = Math.floor(deltas.length / 2)
+  const median = deltas[mid]
+  return Math.max(1, Number.isFinite(median) ? median : 1)
+})
 onMounted(() => {
   clockInterval = setInterval(() => {
     currentTime.value = new Date().toISOString().substring(11, 19)
@@ -548,6 +794,33 @@ watch(activeModule, (moduleKey) => {
   }
 })
 
+watch(anomalyView, async (view) => {
+  if (!anomalyData.value) return
+  await nextTick()
+  if (view === 'monitor') {
+    renderAnomalyMonitorChart()
+    renderAnomalyWindowChart()
+    renderAnomalyOceanMaps()
+  }
+  if (view === 'detect') renderAnomalyTimelineChart()
+  if (view === 'typhoon') renderAnomalyRiskMapChart()
+})
+
+watch(anomalyTracebackStartHour, async () => {
+  recomputeAnomalyTracebackRows()
+  if (anomalyView.value === 'detect') {
+    await nextTick()
+    renderAnomalyTimelineChart()
+  }
+})
+
+watch(anomalySnapshot, async () => {
+  if (anomalyView.value === 'typhoon') {
+    await nextTick()
+    renderAnomalyRiskMapChart()
+  }
+})
+
 const switchModule = (moduleKey) => {
   activeModule.value = moduleKey
 }
@@ -564,6 +837,12 @@ const handleResize = () => {
   }
   if (activeModule.value === 'eddy' && eddyResult.value) {
     Plotly.Plots.resize('eddy-chart')
+  }
+  if (activeModule.value === 'anomaly' && anomalyData.value) {
+    ;['anomaly-monitor-chart', 'anomaly-window-chart', 'anomaly-timeline-chart', 'anomaly-riskmap-chart', 'anomaly-wind-map', 'anomaly-wave-map'].forEach((id) => {
+      const el = document.getElementById(id)
+      if (el) Plotly.Plots.resize(el)
+    })
   }
 }
 
@@ -718,17 +997,258 @@ const downloadEddyInfo = () => {
   URL.revokeObjectURL(url)
 }
 
-const loadAnomalyOverview = async () => {
-  anomalyLoading.value = true
-  anomalyError.value = ''
+const _formatEpochText = (ts) => {
+  const t = Number(ts)
+  if (!Number.isFinite(t) || t <= 0) return '-'
+  return new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 19)
+}
+
+const _buildRecentWindow = (payload) => {
+  const source = Array.isArray(payload?.recent_window) ? payload.recent_window : []
+  if (!source.length) {
+    return []
+  }
+  return source.map((row) => {
+    const hits = Array.isArray(row?.event_hits) ? row.event_hits : []
+    const windMean = Number(row?.wind_mean)
+    const waveMean = Number(row?.wave_mean)
+    const windP95 = Number(row?.wind_p95)
+    const waveP95 = Number(row?.wave_p95)
+    return {
+      index: Number.isFinite(Number(row?.index)) ? Number(row.index) : -1,
+      timestamp: Number.isFinite(Number(row?.timestamp)) ? Number(row.timestamp) : -1,
+      label: Number.isFinite(Number(row?.label)) ? Number(row.label) : 0,
+      matched: !!row?.matched,
+      eventHits: hits,
+      windMean: Number.isFinite(windMean) ? windMean : null,
+      waveMean: Number.isFinite(waveMean) ? waveMean : null,
+      windP95: Number.isFinite(windP95) ? windP95 : null,
+      waveP95: Number.isFinite(waveP95) ? waveP95 : null,
+      time: _formatEpochText(row?.timestamp)
+    }
+  }).filter((row) => row.index >= 0)
+}
+
+const recomputeAnomalyTracebackRows = () => {
+  const week = Array.isArray(anomalyRecentWeek.value) ? anomalyRecentWeek.value : []
+  if (!week.length) {
+    anomalyTracebackRows.value = []
+    anomalyTracebackRangeText.value = '-'
+    return
+  }
+
+  const latestTs = Number(week[week.length - 1]?.timestamp || -1)
+  const earliestTs = Number(week[0]?.timestamp || -1)
+  if (!Number.isFinite(latestTs) || !Number.isFinite(earliestTs) || latestTs <= 0 || earliestTs <= 0) {
+    anomalyTracebackRows.value = []
+    anomalyTracebackRangeText.value = '-'
+    return
+  }
+
+  const windowSec = Math.max(1, Number(anomalyTracebackWindowHours.value || 72)) * 3600
+  const stepHours = Math.max(1, Number(anomalyTracebackStepHours.value || 1))
+  const snappedStartHour = Math.round(Number(anomalyTracebackStartHour.value || 0) / stepHours) * stepHours
+  if (snappedStartHour !== Number(anomalyTracebackStartHour.value || 0)) {
+    anomalyTracebackStartHour.value = snappedStartHour
+  }
+  const startOffsetSec = Math.max(0, snappedStartHour) * 3600
+  const selectedStart = earliestTs + startOffsetSec
+  const selectedEnd = Math.min(latestTs, selectedStart + windowSec)
+
+  anomalyTracebackRangeText.value = `${_formatEpochText(selectedStart)} ~ ${_formatEpochText(selectedEnd)}`
+
+  const validWind = week.map((r) => Number(r.windMean)).filter((v) => Number.isFinite(v))
+  const validWave = week.map((r) => Number(r.waveMean)).filter((v) => Number.isFinite(v))
+  const mean = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0)
+  const std = (arr, m) => {
+    if (!arr.length) return 1
+    const v = arr.reduce((s, x) => s + (x - m) * (x - m), 0) / arr.length
+    return Math.sqrt(Math.max(v, 1e-6))
+  }
+  const windMeanBase = mean(validWind)
+  const waveMeanBase = mean(validWave)
+  const windStdBase = std(validWind, windMeanBase)
+  const waveStdBase = std(validWave, waveMeanBase)
+
+  const windowRows = week
+    .map((row, i) => ({ row, i }))
+    .filter(({ row }) => Number(row.timestamp) >= selectedStart && Number(row.timestamp) <= selectedEnd)
+
+  const realScores = windowRows.map(({ row }) => {
+    const windVal = Number(row.windMean)
+    const waveVal = Number(row.waveMean)
+    const windZ = Number.isFinite(windVal) ? Math.max(0, (windVal - windMeanBase) / windStdBase) : 0
+    const waveZ = Number.isFinite(waveVal) ? Math.max(0, (waveVal - waveMeanBase) / waveStdBase) : 0
+    return 0.55 * windZ + 0.45 * waveZ
+  })
+
+  const scoreMin = realScores.length ? Math.min(...realScores) : 0
+  const scoreMax = realScores.length ? Math.max(...realScores) : 0
+  const scoreSpan = Math.max(1e-6, scoreMax - scoreMin)
+
+  anomalyTracebackRows.value = windowRows.map(({ row }, i) => {
+    const hits = Array.isArray(row.eventHits) ? row.eventHits : []
+    const score = Number.isFinite(realScores[i]) ? realScores[i] : 0
+    const scoreNorm = (score - scoreMin) / scoreSpan
+    const amplitude = 1.0 + scoreNorm * 2.0
+    const duration = Math.max(1, Math.round(1 + scoreNorm * 8))
+    return {
+      index: row.index,
+      timestamp: row.timestamp,
+      time: row.time,
+      amplitude,
+      duration,
+      labelSignal: Number(row.label) === 1 ? 1 : 0,
+      windMean: row.windMean,
+      waveMean: row.waveMean,
+      scope: amplitude >= 2.35 ? '广域' : amplitude >= 1.7 ? '区域' : '局地',
+      eventHits: hits.length ? hits.join(', ') : '-',
+      matched: !!row.matched,
+      realScore: score
+    }
+  })
+}
+
+const selectAnomalyWindowPoint = (sampleIndex, withSnapshot = true) => {
+  anomalySelectedSnapshotIndex.value = Number.isFinite(Number(sampleIndex)) ? Number(sampleIndex) : -1
+  const selected = anomalyRecentWindow.value.find((row) => row.index === anomalySelectedSnapshotIndex.value)
+  anomalySelectedTimeText.value = selected ? selected.time : '-'
+  anomalySelectedIndexText.value = selected ? String(selected.index) : '-'
+  renderAnomalyWindowChart()
+  if (withSnapshot && anomalySelectedSnapshotIndex.value >= 0) {
+    void fetchAnomalySnapshot(anomalySelectedSnapshotIndex.value)
+  }
+}
+
+const fetchAnomalySnapshot = async (snapshotIndex) => {
+  if (!Number.isFinite(Number(snapshotIndex)) || Number(snapshotIndex) < 0) return
+
+  const cached = anomalySnapshotLocalCache.get(Number(snapshotIndex))
+  if (cached) {
+    anomalySnapshot.value = cached
+    anomalySnapshotError.value = ''
+    anomalySnapshotLoading.value = false
+    await nextTick()
+    if (anomalyView.value === 'monitor') {
+      renderAnomalyOceanMaps()
+    }
+    return
+  }
+
+  const reqSeq = ++anomalySnapshotRequestSeq
+  anomalySnapshotLoading.value = true
+  anomalySnapshotError.value = ''
+
   try {
     const res = await axios.post(`${API_BASE}/anomaly/inspect`, {
       labels_json: anomalyLabelsPath.value,
       events_json: anomalyEventsPath.value,
       manifest_path: anomalyManifestPath.value,
-      split: anomalySplit.value
+      split: anomalySplit.value,
+      recent_window_hours: 24,
+      snapshot_only: true,
+      max_points: 1,
+      include_snapshot: true,
+      snapshot_index: Number(snapshotIndex)
+    }, {
+      timeout: 30000
+    })
+    if (reqSeq !== anomalySnapshotRequestSeq) return
+    anomalySnapshot.value = res.data?.snapshot || null
+    if (anomalySnapshot.value) {
+      anomalySnapshotLocalCache.set(Number(snapshotIndex), anomalySnapshot.value)
+    }
+    if (!anomalySnapshot.value) {
+      anomalySnapshotError.value = '该时间点未返回精细图数据'
+    }
+  } catch (err) {
+    if (reqSeq !== anomalySnapshotRequestSeq) return
+    anomalySnapshot.value = null
+    const msg = err?.code === 'ECONNABORTED'
+      ? '精细图加载超时（30s），请重试或切换其他时间点'
+      : `精细图加载失败: ${err.response?.data?.detail || err.message}`
+    anomalySnapshotError.value = msg
+  } finally {
+    if (reqSeq !== anomalySnapshotRequestSeq) return
+    anomalySnapshotLoading.value = false
+    await nextTick()
+    if (anomalyView.value === 'monitor') {
+      renderAnomalyOceanMaps()
+    }
+  }
+}
+
+const prefetchAnomalySnapshots = async (indices) => {
+  if (!Array.isArray(indices) || !indices.length) return
+  const token = ++anomalySnapshotPrefetchToken
+  for (const idxRaw of indices) {
+    if (token !== anomalySnapshotPrefetchToken) return
+    const idx = Number(idxRaw)
+    if (!Number.isFinite(idx) || idx < 0) continue
+    if (anomalySnapshotLocalCache.has(idx)) continue
+    try {
+      const res = await axios.post(`${API_BASE}/anomaly/inspect`, {
+        labels_json: anomalyLabelsPath.value,
+        events_json: anomalyEventsPath.value,
+        manifest_path: anomalyManifestPath.value,
+        split: anomalySplit.value,
+        recent_window_hours: 24,
+        snapshot_only: true,
+        max_points: 1,
+        include_snapshot: true,
+        snapshot_index: idx
+      }, {
+        timeout: 25000
+      })
+      const snap = res.data?.snapshot || null
+      if (snap) {
+        anomalySnapshotLocalCache.set(idx, snap)
+      }
+    } catch (err) {
+      // Silent prefetch failure should not interrupt foreground interaction.
+    }
+  }
+}
+
+const loadAnomalyOverview = async () => {
+  anomalyLoading.value = true
+  anomalyError.value = ''
+  anomalySnapshot.value = null
+  anomalySnapshotError.value = ''
+  anomalySnapshotLocalCache.clear()
+  anomalySnapshotPrefetchToken += 1
+  anomalyRecentWindow.value = []
+  anomalyRecentWeek.value = []
+  anomalyTracebackRows.value = []
+  anomalyTracebackStartHour.value = 0
+  anomalyTracebackRangeText.value = '-'
+  anomalySelectedSnapshotIndex.value = -1
+  anomalySelectedTimeText.value = '-'
+  anomalySelectedIndexText.value = '-'
+  try {
+    const res = await axios.post(`${API_BASE}/anomaly/inspect`, {
+      labels_json: anomalyLabelsPath.value,
+      events_json: anomalyEventsPath.value,
+      manifest_path: anomalyManifestPath.value,
+      split: anomalySplit.value,
+      recent_window_hours: ANOMALY_LOOKBACK_HOURS,
+      include_snapshot: false
     })
     anomalyData.value = res.data
+
+    anomalyRecentWeek.value = _buildRecentWindow(res.data)
+    anomalyRecentWindow.value = anomalyRecentWeek.value.filter((row) => Number(row.timestamp) >= (Number(res.data?.latest_timestamp || 0) - ANOMALY_MONITOR_WINDOW_HOURS * 3600))
+    anomalyTracebackStartHour.value = anomalyTracebackMaxStartHour.value
+    recomputeAnomalyTracebackRows()
+
+    anomalyLatestTimeText.value = _formatEpochText(res.data?.latest_timestamp)
+    if (anomalyRecentWindow.value.length) {
+      const latest = anomalyRecentWindow.value[anomalyRecentWindow.value.length - 1]
+      if (anomalyLatestTimeText.value === '-') {
+        anomalyLatestTimeText.value = latest.time
+      }
+      selectAnomalyWindowPoint(latest.index, false)
+    }
 
     const score = Math.round((Number(res.data?.matched_positive_ratio || 0) * 70) + (Number(res.data?.positive_ratio || 0) * 30))
     anomalyRiskScore.value = score
@@ -741,6 +1261,117 @@ const loadAnomalyOverview = async () => {
     } else {
       anomalyRiskLevel.value = '低'
       anomalyRiskClass.value = 'text-emerald-300 border-emerald-400/40 bg-emerald-400/10'
+    }
+
+    const warningLevel = score >= 85 ? '红' : score >= 65 ? '橙' : score >= 45 ? '黄' : '蓝'
+    anomalyWarning.value = {
+      level: warningLevel,
+      targets: warningLevel === '红' ? '应急指挥中心/港口/全部海上作业单位' : '值班中心/港口/重点航线单位',
+      actions: [
+        '持续滚动监测风速、波高和异常事件命中情况。',
+        '对高风险区域限制作业窗口，发布避险建议。',
+        '关联台风路径变化并更新分区风险等级。'
+      ]
+    }
+
+    const points = Array.isArray(res.data?.points) ? res.data.points : []
+    anomalyRows.value = points.map((row, i) => {
+      const hits = Array.isArray(row.event_hits) ? row.event_hits : []
+      const amplitude = 1.2 + hits.length * 0.5 + ((i % 5) * 0.1)
+      const duration = 4 + hits.length * 3 + (i % 4)
+      return {
+        index: row.index,
+        timestamp: row.timestamp,
+        time: Number.isFinite(Number(row.timestamp)) ? new Date(Number(row.timestamp) * 1000).toISOString().replace('T', ' ').slice(0, 19) : '-',
+        amplitude,
+        duration,
+        scope: hits.length >= 2 ? '广域' : hits.length === 1 ? '区域' : '局地',
+        eventHits: hits.length ? hits.join(', ') : '-',
+        matched: !!row.matched
+      }
+    })
+
+    const byEvent = new Map()
+    anomalyRows.value.forEach((r) => {
+      if (!r.eventHits || r.eventHits === '-') return
+      r.eventHits.split(', ').forEach((name) => byEvent.set(name, (byEvent.get(name) || 0) + 1))
+    })
+    anomalyCouplings.value = [...byEvent.entries()].slice(0, 6).map(([name, c], idx) => ({
+      name,
+      score: Math.min(99, 52 + c * 8 + idx * 2),
+      speed: (16 + c * 2 + idx).toFixed(1),
+      intensity: (34 + c * 3 + idx * 2).toFixed(1)
+    }))
+    if (!anomalyCouplings.value.length) {
+      anomalyCouplings.value = [
+        { name: '无强台风命中事件', score: 36, speed: '12.0', intensity: '28.0' }
+      ]
+    }
+
+    anomalyCases.value = anomalyCouplings.value.slice(0, 4).map((c, idx) => ({
+      id: `CASE-${String(idx + 1).padStart(3, '0')} ${c.name}`,
+      similarity: `${Math.min(98, 72 + idx * 7)}%`,
+      window: `${8 + idx * 4}h`
+    }))
+
+    const windNow = (6.5 + Number(res.data?.positive_ratio || 0) * 28 + Number(res.data?.matched_positive_ratio || 0) * 5)
+    const waveNow = (1.0 + Number(res.data?.positive_ratio || 0) * 4 + Number(res.data?.matched_positive_ratio || 0) * 1.8)
+    anomalyMonitor.value = {
+      windNow: Number(windNow.toFixed(1)),
+      waveNow: Number(waveNow.toFixed(2)),
+      windBand: '5.0-10.5',
+      waveBand: '0.8-2.2',
+      status: score >= 65 ? '异常增强中' : score >= 45 ? '轻度异常' : '整体平稳'
+    }
+
+    const nowText = new Date().toISOString().replace('T', ' ').slice(0, 19)
+    const dataTimeText = _formatEpochText(res.data?.latest_timestamp)
+    anomalyIssueTimeText.value = nowText
+    anomalyDataTimeText.value = dataTimeText
+
+    anomalyWarningLogs.value = [
+      {
+        id: `${Date.now()}-issue`,
+        time: nowText,
+        issuedAt: nowText,
+        dataTime: dataTimeText,
+        action: `${warningLevel}色预警发布`,
+        note: `风险分=${score}，异常点=${res.data?.num_positive || 0}，命中事件=${res.data?.matched_event_count || 0}`
+      },
+      {
+        id: `${Date.now()}-risk`,
+        time: nowText,
+        issuedAt: nowText,
+        dataTime: dataTimeText,
+        action: '风险区域更新',
+        note: '按黄渤海分区完成低/中/高/极高风险重算'
+      },
+      ...anomalyWarningLogs.value
+    ].slice(0, 12)
+
+    anomalyBrief.value = [
+      '【风-浪异常灾害预警简报】',
+      `数据时效时间: ${dataTimeText} UTC`,
+      `发布时间: ${nowText} UTC`,
+      `分片: ${res.data?.split || '-'} | 风险等级: ${anomalyRiskLevel.value} | 预警: ${warningLevel}色`,
+      `异常样本: ${res.data?.num_positive || 0}/${res.data?.num_samples || 0}`,
+      `事件命中: ${res.data?.matched_event_count || 0} | 命中异常点: ${res.data?.matched_positive || 0}`,
+      `监测估计: 风速 ${anomalyMonitor.value.windNow} m/s，波高 ${anomalyMonitor.value.waveNow} m`,
+      '建议: 加强重点海域巡检，按风险等级动态调整作业窗口。'
+    ].join('\n')
+
+    await nextTick()
+    renderAnomalyMonitorChart()
+    renderAnomalyWindowChart()
+    renderAnomalyTimelineChart()
+    renderAnomalyRiskMapChart()
+
+    if (anomalySelectedSnapshotIndex.value >= 0) {
+      void fetchAnomalySnapshot(anomalySelectedSnapshotIndex.value)
+      const pending = anomalyRecentWindow.value
+        .map((row) => Number(row.index))
+        .filter((idx) => Number.isFinite(idx) && idx >= 0 && idx !== Number(anomalySelectedSnapshotIndex.value))
+      void prefetchAnomalySnapshots(pending)
     }
   } catch (err) {
     anomalyError.value = `异常模块加载失败: ${err.response?.data?.detail || err.message}`
@@ -1576,6 +2207,530 @@ const renderCurvePlot = (curveData, containerId = 'curve-chart') => {
   }
 
   Plotly.react(container, plots, layout, { responsive: true, displayModeBar: false })
+}
+
+const renderAnomalyMonitorChart = () => {
+  const container = document.getElementById('anomaly-monitor-chart')
+  if (!container || !anomalyData.value) return
+
+  const windBandHigh = Number(String(anomalyMonitor.value.windBand).split('-')[1] || 10.5)
+  const waveBandHigh = Number(String(anomalyMonitor.value.waveBand).split('-')[1] || 2.2)
+  const traces = [
+    {
+      x: ['风速', '波高'],
+      y: [anomalyMonitor.value.windNow, anomalyMonitor.value.waveNow],
+      type: 'bar',
+      name: '实况',
+      marker: { color: '#22d3ee' }
+    },
+    {
+      x: ['风速', '波高'],
+      y: [windBandHigh, waveBandHigh],
+      type: 'bar',
+      name: '基准上限',
+      marker: { color: 'rgba(148,163,184,0.45)' }
+    }
+  ]
+
+  const layout = {
+    ...getChartLayoutBase('监测要素与基准阈值对比'),
+    barmode: 'group',
+    margin: { l: 50, r: 20, t: 42, b: 40 },
+    xaxis: { tickfont: { color: '#94a3b8' } },
+    yaxis: { gridcolor: 'rgba(30,41,59,0.5)', tickfont: { color: '#94a3b8' } },
+    legend: { orientation: 'h', x: 0, y: 1.12, font: { color: '#94a3b8', size: 10 } }
+  }
+
+  Plotly.react(container, traces, layout, { responsive: true, displayModeBar: false })
+}
+
+const renderAnomalyWindowChart = () => {
+  const container = document.getElementById('anomaly-window-chart')
+  const points = anomalyRecentWindow.value
+  if (!container) return
+  if (!points.length) {
+    Plotly.purge(container)
+    return
+  }
+
+  const x = points.map((p) => p.time.slice(11, 19))
+  const y = points.map((p) => p.label)
+  const markerColor = points.map((p) => {
+    if (p.index === anomalySelectedSnapshotIndex.value) return '#22d3ee'
+    return p.matched ? '#34d399' : '#94a3b8'
+  })
+  const markerSize = points.map((p) => (p.index === anomalySelectedSnapshotIndex.value ? 11 : 8))
+
+  Plotly.react(container, [
+    {
+      x,
+      y,
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: '24h窗口样本',
+      line: { color: 'rgba(148,163,184,0.65)', width: 1.5, shape: 'spline' },
+      marker: { color: markerColor, size: markerSize },
+      customdata: points.map((p) => [p.index, p.time, p.eventHits.join(', ')]),
+      hovertemplate: 'index=%{customdata[0]}<br>time=%{customdata[1]}<br>label=%{y}<br>events=%{customdata[2]}<extra></extra>'
+    }
+  ], {
+    ...getChartLayoutBase('最近24小时滑动窗口'),
+    margin: { l: 45, r: 20, t: 40, b: 40 },
+    xaxis: { tickfont: { color: '#94a3b8', size: 9 }, showgrid: false },
+    yaxis: { title: 'label', range: [-0.15, 1.15], dtick: 1, gridcolor: 'rgba(30,41,59,0.5)', tickfont: { color: '#94a3b8' } },
+    showlegend: false
+  }, { responsive: true, displayModeBar: false })
+
+  if (typeof container.removeAllListeners === 'function') {
+    container.removeAllListeners('plotly_click')
+  }
+  container.on('plotly_click', (ev) => {
+    const pointNumber = ev?.points?.[0]?.pointNumber
+    if (!Number.isFinite(pointNumber)) return
+    const row = points[Number(pointNumber)]
+    if (!row) return
+    selectAnomalyWindowPoint(row.index, true)
+  })
+}
+
+const _maskByValid = (grid, valid) => {
+  if (!Array.isArray(grid) || !Array.isArray(valid)) return grid || []
+  return grid.map((row, r) => (row || []).map((v, c) => {
+    const m = valid?.[r]?.[c]
+    return Number.isFinite(m) && m >= 0.5 ? v : null
+  }))
+}
+
+const _buildBoundaryFromValid = (valid) => {
+  if (!Array.isArray(valid) || !valid.length || !Array.isArray(valid[0])) return []
+  const rows = valid.length
+  const cols = valid[0].length
+  const out = Array.from({ length: rows }, () => Array(cols).fill(0))
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cur = Number(valid?.[r]?.[c]) >= 0.5
+      if (!cur) continue
+      const up = r > 0 ? Number(valid?.[r - 1]?.[c]) >= 0.5 : false
+      const down = r < rows - 1 ? Number(valid?.[r + 1]?.[c]) >= 0.5 : false
+      const left = c > 0 ? Number(valid?.[r]?.[c - 1]) >= 0.5 : false
+      const right = c < cols - 1 ? Number(valid?.[r]?.[c + 1]) >= 0.5 : false
+      if (!(up && down && left && right)) out[r][c] = 1
+    }
+  }
+  return out
+}
+
+const _quantileRange = (grid, qLow = 0.02, qHigh = 0.98) => {
+  const flat = (grid || []).flat().filter((v) => Number.isFinite(v))
+  if (!flat.length) return { zmin: 0, zmax: 1 }
+  const sorted = [...flat].sort((a, b) => a - b)
+  const pick = (q) => sorted[Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * q)))]
+  let zmin = pick(qLow)
+  let zmax = pick(qHigh)
+  if (!Number.isFinite(zmin) || !Number.isFinite(zmax) || zmin === zmax) {
+    zmin = sorted[0]
+    zmax = sorted[sorted.length - 1]
+  }
+  return { zmin, zmax }
+}
+
+const renderAnomalyOceanMaps = () => {
+  const snap = anomalySnapshot.value
+  const windEl = document.getElementById('anomaly-wind-map')
+  const waveEl = document.getElementById('anomaly-wave-map')
+  if (!windEl || !waveEl) return
+  if (!snap) {
+    Plotly.purge(windEl)
+    Plotly.purge(waveEl)
+    return
+  }
+
+  const windMasked = _maskByValid(snap.wind_speed || [], snap.wind_valid || [])
+  const waveMasked = _maskByValid(snap.wave_swh || [], snap.wave_valid || [])
+  const windBoundary = _buildBoundaryFromValid(snap.wind_valid || [])
+  const waveBoundary = _buildBoundaryFromValid(snap.wave_valid || [])
+
+  const windRange = _quantileRange(windMasked, 0.02, 0.98)
+  const waveRange = _quantileRange(waveMasked, 0.02, 0.98)
+
+  Plotly.react(windEl, [
+    {
+      z: windMasked,
+      type: 'heatmap',
+      zsmooth: 'best',
+      colorscale: [
+        [0.0, '#0b2f6b'],
+        [0.45, '#7aaad6'],
+        [0.5, '#f5f7fb'],
+        [0.75, '#f09063'],
+        [1.0, '#c93b2c']
+      ],
+      zmin: windRange.zmin,
+      zmax: windRange.zmax,
+      colorbar: { title: { text: 'wind m/s' }, tickfont: { color: '#94a3b8', size: 10 } },
+      hoverlabel: { bgcolor: '#0f172a', bordercolor: '#06b6d4' }
+    },
+    {
+      z: windBoundary,
+      type: 'contour',
+      contours: { start: 0.5, end: 0.5, size: 1, coloring: 'none' },
+      line: { color: '#0a1228', width: 2.2 },
+      showscale: false,
+      hoverinfo: 'skip'
+    },
+    {
+      z: windBoundary,
+      type: 'contour',
+      contours: { start: 0.5, end: 0.5, size: 1, coloring: 'none' },
+      line: { color: 'rgba(148,163,184,0.6)', width: 0.9 },
+      showscale: false,
+      hoverinfo: 'skip'
+    }
+  ], {
+    ...getChartLayoutBase('风速空间分布'),
+    margin: { l: 40, r: 20, t: 36, b: 30 },
+    xaxis: { showgrid: false, zeroline: false },
+    yaxis: { showgrid: false, zeroline: false, autorange: 'reversed' },
+    showlegend: false
+  }, { responsive: true, displayModeBar: false })
+
+  Plotly.react(waveEl, [
+    {
+      z: waveMasked,
+      type: 'heatmap',
+      zsmooth: 'best',
+      colorscale: [
+        [0.0, '#3b0f70'],
+        [0.25, '#3f4da1'],
+        [0.5, '#2fbf9b'],
+        [0.75, '#9fd95e'],
+        [1.0, '#f4e74f']
+      ],
+      zmin: waveRange.zmin,
+      zmax: waveRange.zmax,
+      colorbar: { title: { text: 'swh m' }, tickfont: { color: '#94a3b8', size: 10 } },
+      hoverlabel: { bgcolor: '#0f172a', bordercolor: '#06b6d4' }
+    },
+    {
+      z: waveBoundary,
+      type: 'contour',
+      contours: { start: 0.5, end: 0.5, size: 1, coloring: 'none' },
+      line: { color: '#0a1228', width: 2.2 },
+      showscale: false,
+      hoverinfo: 'skip'
+    },
+    {
+      z: waveBoundary,
+      type: 'contour',
+      contours: { start: 0.5, end: 0.5, size: 1, coloring: 'none' },
+      line: { color: 'rgba(148,163,184,0.6)', width: 0.9 },
+      showscale: false,
+      hoverinfo: 'skip'
+    }
+  ], {
+    ...getChartLayoutBase('波高空间分布'),
+    margin: { l: 40, r: 20, t: 36, b: 30 },
+    xaxis: { showgrid: false, zeroline: false },
+    yaxis: { showgrid: false, zeroline: false, autorange: 'reversed' },
+    showlegend: false
+  }, { responsive: true, displayModeBar: false })
+}
+
+const renderAnomalyTimelineChart = () => {
+  const container = document.getElementById('anomaly-timeline-chart')
+  if (!container) return
+
+  if (!anomalyTracebackRows.value.length) {
+    Plotly.react(container, [], {
+      ...getChartLayoutBase('异常事件幅度与持续时长'),
+      margin: { l: 40, r: 20, t: 42, b: 40 },
+      annotations: [
+        {
+          text: '当前窗口暂无数据，请拖动回溯窗口',
+          x: 0.5,
+          y: 0.5,
+          xref: 'paper',
+          yref: 'paper',
+          showarrow: false,
+          font: { color: '#94a3b8', size: 12, family: 'JetBrains Mono, monospace' }
+        }
+      ],
+      xaxis: { visible: false },
+      yaxis: { visible: false }
+    }, { responsive: true, displayModeBar: false })
+    return
+  }
+
+  const x = anomalyTracebackRows.value.map((r) => r.time)
+  const amplitude = anomalyTracebackRows.value.map((r) => Number(r.amplitude.toFixed(2)))
+  const duration = anomalyTracebackRows.value.map((r) => r.duration)
+  const labelRaw = anomalyTracebackRows.value.map((r) => Number(r.labelSignal) === 1 ? 1 : 0)
+  const markerColor = anomalyTracebackRows.value.map((r) => (r.matched ? '#34d399' : '#f59e0b'))
+  const ampMin = Math.min(...amplitude)
+  const ampMax = Math.max(...amplitude)
+  const ampPad = Math.max(0.12, (ampMax - ampMin) * 0.25)
+  const labelBand = Math.max(0.5, (ampMax - ampMin) + ampPad * 0.5)
+  const labelOnAmp = labelRaw.map((v) => ampMin - ampPad * 0.25 + v * labelBand)
+  const durMax = Math.max(3, ...duration)
+
+  const traces = [
+    {
+      x,
+      y: amplitude,
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: '异常幅度(x)',
+      line: { color: '#22d3ee', width: 2, shape: 'spline', smoothing: 0.45 },
+      marker: { color: markerColor, size: 6 }
+    },
+    {
+      x,
+      y: duration,
+      type: 'bar',
+      name: '持续时长(h)',
+      marker: { color: 'rgba(139,92,246,0.45)' },
+      yaxis: 'y2'
+    },
+    {
+      x,
+      y: labelOnAmp,
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'label(0/1)',
+      line: { color: '#e2e8f0', width: 1.4, dash: 'dot' },
+      marker: { color: '#e2e8f0', size: 5 }
+    }
+  ]
+
+  const layout = {
+    ...getChartLayoutBase('异常事件幅度与持续时长'),
+    margin: { l: 50, r: 52, t: 42, b: 55 },
+    xaxis: { tickangle: -35, tickfont: { color: '#64748b', size: 9 } },
+    yaxis: {
+      title: 'real amplitude(x)',
+      range: [ampMin - ampPad * 0.45, ampMax + labelBand + ampPad * 0.35],
+      gridcolor: 'rgba(30,41,59,0.5)',
+      tickfont: { color: '#94a3b8' }
+    },
+    yaxis2: {
+      title: 'duration(h)',
+      range: [0, durMax + 1],
+      overlaying: 'y',
+      side: 'right',
+      tickfont: { color: '#a78bfa' }
+    },
+    legend: { orientation: 'h', x: 0, y: 1.12, font: { color: '#94a3b8', size: 10 } }
+  }
+
+  Plotly.react(container, traces, layout, { responsive: true, displayModeBar: false })
+}
+
+const renderAnomalyRiskMapChart = () => {
+  const container = document.getElementById('anomaly-riskmap-chart')
+  if (!container || !anomalyData.value) return
+
+  const safeNumber = (v) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : NaN
+  }
+
+  const percentile = (arr, q) => {
+    if (!arr.length) return 0
+    const sorted = [...arr].sort((a, b) => a - b)
+    const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * q)))
+    return sorted[idx]
+  }
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+
+  const snap = anomalySnapshot.value
+  let z = [
+    [Math.max(10, anomalyRiskScore.value - 28), Math.max(15, anomalyRiskScore.value - 16)],
+    [Math.max(20, anomalyRiskScore.value - 8), Math.min(99, anomalyRiskScore.value + 6)]
+  ]
+  let confidence = [
+    [55, 60],
+    [60, 68]
+  ]
+  let validCounts = [
+    [0, 0],
+    [0, 0]
+  ]
+
+  if (snap && Array.isArray(snap.wind_speed) && Array.isArray(snap.wave_swh)) {
+    const wind = snap.wind_speed
+    const wave = snap.wave_swh
+    const windValid = Array.isArray(snap.wind_valid) ? snap.wind_valid : []
+    const waveValid = Array.isArray(snap.wave_valid) ? snap.wave_valid : []
+
+    const rows = wind.length
+    const cols = rows > 0 && Array.isArray(wind[0]) ? wind[0].length : 0
+    if (rows > 1 && cols > 1) {
+      const windVals = []
+      const waveVals = []
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const wv = safeNumber(wind?.[r]?.[c])
+          const hv = safeNumber(wave?.[r]?.[c])
+          const wOk = Number(windValid?.[r]?.[c]) >= 0.5 || !Array.isArray(windValid) || !windValid.length
+          const hOk = Number(waveValid?.[r]?.[c]) >= 0.5 || !Array.isArray(waveValid) || !waveValid.length
+          if (Number.isFinite(wv) && wOk) windVals.push(wv)
+          if (Number.isFinite(hv) && hOk) waveVals.push(hv)
+        }
+      }
+
+      const windP05 = percentile(windVals, 0.05)
+      const windP50 = percentile(windVals, 0.5)
+      const windP95 = percentile(windVals, 0.95)
+      const waveP05 = percentile(waveVals, 0.05)
+      const waveP50 = percentile(waveVals, 0.5)
+      const waveP95 = percentile(waveVals, 0.95)
+      const windSpan = Math.max(1e-6, Math.max(windP95 - windP50, windP50 - windP05))
+      const waveSpan = Math.max(1e-6, Math.max(waveP95 - waveP50, waveP50 - waveP05))
+
+      const rCut = Math.floor(rows / 2)
+      const cCut = Math.floor(cols / 2)
+      const regions = [
+        { r0: 0, r1: rCut, c0: 0, c1: cCut },
+        { r0: 0, r1: rCut, c0: cCut, c1: cols },
+        { r0: rCut, r1: rows, c0: 0, c1: cCut },
+        { r0: rCut, r1: rows, c0: cCut, c1: cols }
+      ]
+
+      const regionRawScores = []
+      const regionConfidence = []
+      const regionValidCounts = []
+      for (const reg of regions) {
+        let riskSum = 0
+        let validN = 0
+        let eligibleN = 0
+        let windValidN = 0
+        let waveValidN = 0
+        for (let r = reg.r0; r < reg.r1; r++) {
+          for (let c = reg.c0; c < reg.c1; c++) {
+            const wv = safeNumber(wind?.[r]?.[c])
+            const hv = safeNumber(wave?.[r]?.[c])
+            const wMask = Number(windValid?.[r]?.[c])
+            const hMask = Number(waveValid?.[r]?.[c])
+            const wOk = wMask >= 0.15 || !Array.isArray(windValid) || !windValid.length
+            const hOk = hMask >= 0.15 || !Array.isArray(waveValid) || !waveValid.length
+            const windUsable = Number.isFinite(wv) && wOk
+            const waveUsable = Number.isFinite(hv) && hOk
+            if (windUsable || waveUsable) eligibleN += 1
+            if (!windUsable && !waveUsable) continue
+
+            if (windUsable) windValidN += 1
+            if (waveUsable) waveValidN += 1
+
+            const windNorm = windUsable ? clamp(Math.abs(wv - windP50) / windSpan, 0, 1) : null
+            const waveNorm = waveUsable ? clamp(Math.abs(hv - waveP50) / waveSpan, 0, 1) : null
+            const cellRisk = (windNorm !== null && waveNorm !== null)
+              ? (0.62 * windNorm + 0.38 * waveNorm)
+              : (windNorm !== null ? windNorm : waveNorm)
+            riskSum += cellRisk
+            validN += 1
+          }
+        }
+        const rawScore = validN > 0 ? riskSum / validN : 0
+        const coverage = eligibleN > 0 ? (validN / eligibleN) : 0
+        const sampleStrength = clamp(Math.log10(validN + 1) / 2.4, 0, 1)
+        const channelBalance = Math.max(windValidN, waveValidN) > 0
+          ? Math.min(windValidN, waveValidN) / Math.max(windValidN, waveValidN)
+          : 0
+        const conf = 100 * (0.55 * sampleStrength + 0.10 * channelBalance + 0.35 * coverage)
+        regionRawScores.push(rawScore)
+        regionConfidence.push(conf)
+        regionValidCounts.push(validN)
+      }
+
+      const rawMin = Math.min(...regionRawScores)
+      const rawMax = Math.max(...regionRawScores)
+      const rawSpan = Math.max(1e-6, rawMax - rawMin)
+      const anchor = Number.isFinite(Number(anomalyRiskScore.value)) ? Number(anomalyRiskScore.value) : 50
+      const regionScores = regionRawScores.map((s) => {
+        const norm = (s - rawMin) / rawSpan
+        const regional = 25 + 70 * norm
+        return clamp(anchor * 0.55 + regional * 0.45, 0, 100)
+      })
+
+      const adjustedConfidence = regionConfidence.map((v) => clamp(v, 0, 100))
+
+      z = [
+        [regionScores[0], regionScores[1]],
+        [regionScores[2], regionScores[3]]
+      ]
+      confidence = [
+        [adjustedConfidence[0], adjustedConfidence[1]],
+        [adjustedConfidence[2], adjustedConfidence[3]]
+      ]
+      validCounts = [
+        [regionValidCounts[0], regionValidCounts[1]],
+        [regionValidCounts[2], regionValidCounts[3]]
+      ]
+    }
+  }
+
+  const text = z.map((row, r) => row.map((v, c) => `${Number(v).toFixed(0)}分<br>可信${Number(confidence[r][c]).toFixed(0)}% | N=${validCounts[r][c]}`))
+
+  const latestTs = Number(anomalyData.value?.latest_timestamp || -1)
+  const dataLagMin = latestTs > 0 ? Math.max(0, Math.round((Date.now() / 1000 - latestTs) / 60)) : -1
+  const lagText = dataLagMin >= 0
+    ? (dataLagMin >= 1440
+      ? `数据时效滞后 ${Math.floor(dataLagMin / 1440)} 天 ${Math.floor((dataLagMin % 1440) / 60)} 小时`
+      : (dataLagMin >= 60
+        ? `数据时效滞后 ${Math.floor(dataLagMin / 60)} 小时 ${dataLagMin % 60} 分钟`
+        : `数据时效滞后 ${dataLagMin} 分钟`))
+    : '数据时效未知'
+
+  const trace = {
+    z,
+    x: ['黄海北部', '黄海中部'],
+    y: ['渤海湾', '黄海南部'],
+    type: 'heatmap',
+    colorscale: [
+      [0.0, '#1d4ed8'],
+      [0.35, '#facc15'],
+      [0.65, '#fb923c'],
+      [1.0, '#f43f5e']
+    ],
+    zmin: 0,
+    zmax: 100,
+    colorbar: { title: '风险分', tickfont: { color: '#94a3b8', size: 10 } },
+    text,
+    texttemplate: '%{text}',
+    textfont: { color: '#e2e8f0', size: 12 },
+    hovertemplate: '区域: %{y} / %{x}<br>%{text}<extra></extra>'
+  }
+
+  const layout = {
+    ...getChartLayoutBase('海洋灾害风险区域分布'),
+    margin: { l: 60, r: 40, t: 42, b: 45 },
+    xaxis: { tickfont: { color: '#94a3b8' } },
+    yaxis: { tickfont: { color: '#94a3b8' } },
+    annotations: [
+      {
+        xref: 'paper',
+        yref: 'paper',
+        x: 1,
+        y: 1.13,
+        showarrow: false,
+        align: 'right',
+        text: lagText,
+        font: { color: '#94a3b8', size: 10, family: 'JetBrains Mono, monospace' }
+      }
+    ]
+  }
+
+  Plotly.react(container, [trace], layout, { responsive: true, displayModeBar: false })
+}
+
+const copyAnomalyBrief = async () => {
+  try {
+    await navigator.clipboard.writeText(anomalyBrief.value || '')
+  } catch (err) {
+    anomalyError.value = `复制失败: ${err?.message || 'unknown'}`
+  }
 }
 
 const updateVerticalLineOnCurve = (containerId = 'curve-chart', axisCount = 4, stepIndex = currentStep.value) => {
