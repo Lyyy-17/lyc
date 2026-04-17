@@ -70,7 +70,7 @@ def merge_pipeline_artifacts_into_config(config_path: Path, root: Path) -> None:
     )
     config_path.write_text(
         "# 数据路径与清洗参数（相对项目根目录）\n"
-        "# 末尾 artifacts / standardization 由 scripts/02_preprocess.py 在 --steps 含 stats 时自动回写\n"
+        "# 末尾 artifacts / standardization 由各任务预处理写出 norm 后自动回写，或运行 scripts/sync_data_config.py\n"
         + out,
         encoding="utf-8",
     )

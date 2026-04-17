@@ -6,7 +6,7 @@
 
 | 路径 | 说明 |
 |------|------|
-| `data_config.yaml` | 数据路径、划分、预处理 artifacts、与 `scripts/02_preprocess.py` 一致 |
+| `data_config.yaml` | 数据路径、划分、预处理 artifacts、与各任务预处理脚本 / `sync_data_config.py` 一致 |
 | `eddy_detection/` | **涡旋识别主模型** `model.yaml` / `train.yaml` |
 | `element_forecasting/` | **要素预报主模型**（非基线），见该目录 [`README.md`](element_forecasting/README.md) |
 | `anomaly_detection/` | **异常检测主模型** |
@@ -15,14 +15,14 @@
 
 基线训练入口：
 
-- `scripts/test_element/run_element_baseline_train.py` → 读取 `configs/baseline/element_forecasting/*.yaml`
+- `python -m baseline.element_forecasting.train`（`PYTHONPATH=src`）→ 读取 `configs/baseline/element_forecasting/*.yaml`
 - `scripts/05_train_anomaly.py --baseline` → 读取 `configs/baseline/anomaly_detection/*.yaml`
 
 ---
 
 ## `data_config.yaml` 新增可选项（merge）
 
-当使用 `python scripts/02_preprocess.py --steps merge` 时，可在 `data_config.yaml` 中通过以下可选字段自定义整合产物目录：
+当调用 `data_preprocessing.merger.run_merge_for_task`（例如要素脚本 `02_preprocess_element.py` 默认会 merge clean）时，可在 `data_config.yaml` 中通过以下可选字段自定义整合产物目录：
 
 ```yaml
 merge:
@@ -33,4 +33,3 @@ merge:
 ```
 
 - 不配置时使用上述默认目录。
-- `--merge-files-per-output` 为命令行参数，用于控制每个输出大文件包含的小文件数。

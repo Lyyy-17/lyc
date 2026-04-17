@@ -41,6 +41,12 @@ data/processed/*
 !data/processed/element_forecasting/
 data/processed/element_forecasting/*
 !data/processed/element_forecasting/path.txt
+!data/processed/eddy_detection/
+data/processed/eddy_detection/*
+!data/processed/eddy_detection/path.txt
+!data/processed/anomaly_detection/
+data/processed/anomaly_detection/*
+!data/processed/anomaly_detection/path.txt
 !data/processed/splits/
 !data/processed/splits/**
 !data/processed/normalization/
@@ -48,8 +54,15 @@ data/processed/element_forecasting/*
 
 # 中间训练结果（checkpoint、日志等）；最佳模型请挑选后放入 models/
 outputs/*
-# 最终最佳输出结果（指标、图表等）不忽略，可提交
-!outputs/final_results/
+# 各任务下定稿输出（指标、图表等）不忽略，可提交（大体积训练 run 请放 runs/ 下并保持忽略）
+!outputs/eddy_detection/
+!outputs/eddy_detection/**
+outputs/eddy_detection/runs/
+outputs/eddy_detection/runs/**
+!outputs/element_forecasting/
+!outputs/element_forecasting/**
+!outputs/anomaly_detection/
+!outputs/anomaly_detection/**
 
 # Logs
 *.log

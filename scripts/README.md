@@ -9,7 +9,11 @@
 | 脚本 | 作用 |
 |------|------|
 | `01_data_inspect.py` | 只读抽样统计 `data/raw` 下 NetCDF |
-| `02_preprocess.py` | raw → 清洗落盘；可选划分、splits、训练集 norm、回写配置 |
+| `02_preprocess_eddy.py` | 涡旋一键预处理：clean + META4 像素标签（02c+02h）+ split + stats |
+| `02_preprocess_element.py` | 要素一键预处理：clean + merge + split + stats（可直接接 `04_train_forecast.py`） |
+| `02_preprocess_anomaly.py` | 异常一键预处理：clean + split + stats（可直接接 `05_train_anomaly.py`） |
+| `sync_data_config.py` | 仅根据已有 `splits/*.json` 与 `normalization/*_norm.json` 回写 `data_config.yaml` |
+| `validate_processed.py` | 校验三任务 manifest 路径与 processed 抽检 |
 | `02c_generate_meta4_labels.py` | 生成 META4 涡旋对象级标签 |
 | `02d_meta4_parallel.py` | 并行生成 META4 对象级标签（旧流程封装） |
 | `02e_generate_meta4_objects.py` | 生成 META4 对象文件 |
@@ -19,19 +23,14 @@
 | `02h_objects_to_pixel_mask.py` | 将对象级结果转为像素级 mask |
 | `02i_split_eddy_competition.py` | 将单文件涡旋数据按比赛/时间切分 |
 | `02j_objects_to_mask_parallel.py` | 并行将对象级标签转为像素级 mask |
-| `smoke_element_forecast.py` | 合成极少样本 + 1 epoch，验证要素 ConvLSTM 基线链路（`outputs/smoke_element_baseline/`，见 `src/baseline/element_forecasting/README.md`） |
 | `03_train_eddy.py` | 涡旋识别训练入口（读取 META4 mask 标签，训练 U-Net 并评估） |
 | `04_train_forecast.py` | 要素预报训练入口（支持命令行覆盖参数） |
-| `test_element/run_element_baseline_train.py` | 要素预报基线训练，读取 `configs/baseline/element_forecasting/{model,train}.yaml` |
 | `05_train_anomaly.py` | 风-浪异常训练与评估（主模型/基线可切换，支持阈值策略、labels/events） |
-| `05b_prepare_anomaly_eval_templates.py` | 生成 anomaly 的 labels/events 模板（用于准确率/AUC与事件关联评估） |
-| `05c_compare_anomaly_methods.py` | 统一对比主模型、AE baseline、PCA、IsolationForest |
-| `05d_generate_anomaly_labels_from_ibtracs.py` | 从 IBTrACS 轨迹自动生成 labels/events（按样本 timestamp 对齐） |
-| `06_run_pipeline.py` | 端到端流水线（**占位**） |
-| `07_generate_report.py` | 评估报告生成（**占位**） |
-| `08_check_element_forecast_competition.py` | 要素预测比赛门槛检查（支持 12h 滚动到 72h + MSE≤15%），输出 PASS/FAIL JSON |
+| `06_anomaly_assess.py` | 异常评估：`templates`（labels/events 模板）/ `ibtracs`（IBTrACS 标签）/ `compare`（多方法对比）；实现见 `src/anomaly_detection/assess/` |
+| `06_element_assess.py` | 要素预报比赛口径验收：单文件、滚动长时预测、阈值 PASS/FAIL，输出 JSON/CSV/Markdown 与图 |
+| `07_web_run.py` | 一键启动 Web：FastAPI（uvicorn）+ 可选 Vite 前端；支持 `--backend-only` / `--frontend-only` |
 
-除 `01`/`02` 外，`03_train_eddy.py`、`04_train_forecast.py`、`05_train_anomaly.py`、`05b_prepare_anomaly_eval_templates.py`、`05c_compare_anomaly_methods.py` 已实现；其余多为预留入口。
+三任务预处理请分别使用 `02_preprocess_eddy.py`、`02_preprocess_element.py`、`02_preprocess_anomaly.py`；核心逻辑在 `src/data_preprocessing/task_pipelines.py`。
 
 ---
 
@@ -58,84 +57,30 @@ python scripts/01_data_inspect.py --out outputs/data_stats/summary.json
 
 ---
 
-## `02_preprocess.py`
+## 任务预处理（`02_preprocess_*.py`）
 
-从 `data/raw` 清洗写入 `data/processed`，可选 **划分 train/val/test**、**训练集标准化参数**、**回写 `data_config.yaml`**。清洗与 split/stats 阶段会使用 **`tqdm` 进度条**（与日志协同，见 `utils.logger` 的 `tqdm_logging`）。
-
-### 步骤 `--steps` / `--stage`（同义）
-
-逗号分隔，可多选：
-
-| 取值 | 含义 |
-|------|------|
-| `clean` | 读 raw，清洗后写入 `data/processed`（**默认仅本步**） |
-| `split` | 按 `configs/data_config.yaml` 中 `split` 比例划分，写出 `data/processed/splits/*.json` |
-| `stats` | 仅用**训练集**估计各变量 mean/std，写出 `data/processed/normalization/*_norm.json`，并合并进配置 |
-| `merge` | 将指定任务下清洗后的多个样本按时间坐标拼接成总文件（`eddy/element` 输出 `all_clean_merged.nc`；`anomaly` 输出 `oper_merged.nc` 与 `wave_merged.nc`） |
-| `validate` | 仅运行 **validator**：检查 `splits/*.json` 路径与 processed 样本（见 `data_preprocessing.validator`）；也可与 `clean`/`split`/`stats` 组合，或在本命令末尾加 `--validate` |
-| `all` | 等价于 `clean,split,stats` 三步（**不含** validate） |
-
-含 `stats` 时会在最后更新 `configs/data_config.yaml` 中的 `artifacts` / `standardization`（首次回写前会备份 `data_config.yaml.bak`）。
+每个脚本从 `data/raw` 对应子目录读到 `data/processed`，并写出 **划分清单**、**训练集标准化 JSON**、回写 **`data_config.yaml`**（与 `stats` 等价的最后一步）。实现均在 `src/data_preprocessing/task_pipelines.py`，脚本仅传参。
 
 ### 常用命令
 
 ```powershell
-python scripts/02_preprocess.py --help
+# 涡旋：clean + META4 标签 + split + stats
+python scripts/02_preprocess_eddy.py -j 4 --validate
 
-# 只清洗（默认 steps=clean），三类任务全跑
-python scripts/02_preprocess.py --task all
+# 要素：clean + merge（生成 all_clean_merged.nc 与 path.txt）+ split + stats
+python scripts/02_preprocess_element.py -j 4 --validate
 
-# 全流程：清洗 + 划分 + 统计 + 回写配置
-python scripts/02_preprocess.py --task all --steps all
+# 异常：clean + split + stats（可选 --merge 额外生成 oper/wave merged）
+python scripts/02_preprocess_anomaly.py -j 4 --validate
 
-# 已有清洗结果，只做划分与统计（PowerShell 建议给逗号参数加引号）
-python scripts/02_preprocess.py --task all --steps "split,stats"
-# 与 --stage 同义
-python scripts/02_preprocess.py --task all --stage "split,stats"
+# 仅回写配置（已有 splits 与 norm JSON）
+python scripts/sync_data_config.py
 
-# 只跑某一类任务，例如要素
-python scripts/02_preprocess.py --task element --steps "clean,split,stats"
-
-# 将清洗后样本按时序合并（单任务）
-python scripts/02_preprocess.py --task element --steps merge
-
-# 清洗后立刻合并
-python scripts/02_preprocess.py --task all --steps "clean,merge"
-
-# 调试：每类只处理少量文件/年份
-python scripts/02_preprocess.py --task all --limit 2
-
-# 清洗阶段多进程（仅 clean 生效）
-python scripts/02_preprocess.py --task all --steps clean -j 4
-
-# 仅根据已有 splits/*.json 与 normalization/*_norm.json 回写配置（不跑清洗/划分/统计）
-python scripts/02_preprocess.py --sync-config-only
-
-# 仅校验（manifest + processed 抽检）
-python scripts/02_preprocess.py --steps validate
-
-# 全流程后再校验；大数据集可加 --validate-limit 限制每任务检查条数
-python scripts/02_preprocess.py --task all --steps all --validate --validate-limit 50
+# 三任务一起校验（manifest + 抽检）
+python scripts/validate_processed.py --validate-limit 50
 ```
 
-### 参数摘要
-
-| 参数 | 说明 |
-|------|------|
-| `--config` | 默认 `configs/data_config.yaml` |
-| `--task` | `all` \| `eddy` \| `element` \| `anomaly` |
-| `--steps` / `--stage` | `clean`、`split`、`stats`、`all` 或其逗号组合 |
-| `--limit` | 每类最多处理的文件数（eddy/element）或异常年份数；不设则按配置 `batch` 或全部 |
-| `-j` / `--workers` | **仅 clean**：并行进程数，默认 `1` |
-| `--sync-config-only` | 只合并 artifacts/standardization 到 YAML |
-| `--validate` | 在完成其它步骤后执行 `validate_manifest_and_samples` |
-| `--validate-limit` | 校验时每任务最多检查的样本数；默认不限制 |
-
-### 数据与配置
-
-- 原始数据路径：`data_config.yaml` → `paths.raw`。
-- 输出路径：`paths.processed`、`paths.splits`、`paths.normalization`。
-- 划分比例：`split.train_ratio` / `val_ratio` / `test_ratio` / `seed`。
+各脚本支持 `--limit`（调试）、`-j`（清洗并行）、`--validate`（完成后校验）。详见各文件内 `argparse` 帮助。
 
 ---
 
@@ -162,5 +107,5 @@ python scripts/04_train_forecast.py --epochs 5 --batch-size 2 --help
 ## 典型流程
 
 1. `01_data_inspect.py`：了解 raw 数据质量（可选 `--out` 保存 JSON）。
-2. `02_preprocess.py --task all --steps all`：清洗 → 划分 → 标准化参数 → 更新配置。
+2. 按任务分别运行 `02_preprocess_eddy.py` / `02_preprocess_element.py` / `02_preprocess_anomaly.py`（或只跑你当前要训练的任务）。
 3. **训练**：要素预报 `python scripts/04_train_forecast.py`；其它任务用 `src/<任务>/dataset.py` 或 `src/baseline/<任务>/`。

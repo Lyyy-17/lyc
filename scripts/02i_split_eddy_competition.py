@@ -38,7 +38,7 @@ def main() -> None:
     ap.add_argument(
         "--label-nc",
         type=Path,
-        default=ROOT / "data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask.nc",
+        default=ROOT / "data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask_bg0.nc",
     )
     ap.add_argument(
         "--out",

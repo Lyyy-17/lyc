@@ -102,7 +102,7 @@ def main() -> None:
     ap.add_argument("--objects-nc", type=Path, default=ROOT / "data/processed/eddy_detection/labels/19930101_20241231_objects_meta4.nc")
     ap.add_argument("--time-indices", type=int, nargs="*", default=None)
     ap.add_argument("--top-n", type=int, default=4)
-    ap.add_argument("--out-dir", type=Path, default=ROOT / "outputs/final_results/eddy_detection/meta4_object_visuals")
+    ap.add_argument("--out-dir", type=Path, default=ROOT / "outputs/eddy_detection/meta4_object_visuals")
     args = ap.parse_args()
 
     setup_logging(log_file=ROOT / "outputs/logs/meta4_object_visualize.log")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,57 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 		return {}
 	data = yaml.safe_load(path.read_text(encoding="utf-8"))
 	return data if isinstance(data, dict) else {}
+
+
+def _read_path_txt(path_txt_rel: str) -> str:
+	path_txt = ROOT / path_txt_rel
+	if not path_txt.is_file():
+		return ""
+	try:
+		return path_txt.read_text(encoding="utf-8").strip()
+	except Exception:
+		return ""
+
+
+def _first_existing_file(candidates: list[Path]) -> Path | None:
+	for cand in candidates:
+		if cand.is_file():
+			return cand
+	return None
+
+
+def _resolve_eddy_defaults_from_path_txt() -> tuple[Path | None, Path | None, Path | None]:
+	raw_dir = _read_path_txt("data/processed/eddy_detection/path.txt")
+	if not raw_dir:
+		return (None, None, None)
+	base_dir = Path(raw_dir)
+	if not base_dir.is_absolute():
+		base_dir = ROOT / base_dir
+	if not base_dir.is_dir():
+		return (None, None, None)
+
+	clean_default = _first_existing_file(
+		[
+			base_dir / "19930101_20241231_clean.nc",
+			*sorted(base_dir.glob("*_clean.nc")),
+		]
+	)
+
+	labels_dir = base_dir / "labels"
+	if not labels_dir.is_dir():
+		labels_dir = None
+
+	label_default = None
+	if labels_dir is not None:
+		label_default = _first_existing_file(
+			[
+				labels_dir / "19930101_20241231_label_meta4_mask_bg0.nc",
+				*sorted(labels_dir.glob("*_bg0.nc")),
+				*sorted(labels_dir.glob("*_label*.nc")),
+			]
+		)
+
+	return (clean_default, label_default, labels_dir)
 
 
 def main() -> None:
@@ -117,6 +169,17 @@ def main() -> None:
 	ap.add_argument("--device", type=str, default=dev_default)
 	args = ap.parse_args(rest)
 
+	default_clean_rel = (ROOT / "data/processed/eddy_detection/19930101_20241231_clean.nc").resolve()
+	default_labels_rel = (ROOT / "data/processed/eddy_detection/labels").resolve()
+	path_clean, path_label, path_labels_dir = _resolve_eddy_defaults_from_path_txt()
+
+	if args.clean_nc is None and path_clean is not None:
+		args.clean_nc = path_clean
+	if args.label_nc is None and path_label is not None:
+		args.label_nc = path_label
+	if args.labels_dir.resolve() == default_labels_rel and path_labels_dir is not None:
+		args.labels_dir = path_labels_dir
+
 	log_file = args.log_file if args.log_file.is_absolute() else (ROOT / args.log_file)
 	setup_logging(log_file=log_file)
 	if args.device.startswith("cuda") and torch.cuda.is_available():
@@ -191,10 +254,10 @@ def main() -> None:
 
 	if len(train_ds) == 0:
 		raise SystemExit(
-			"train dataset empty. Please run:\n"
-			"1) python scripts/02c_generate_meta4_labels.py --clean-nc data/processed/eddy_detection/19930101_20241231_clean.nc --out-nc data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask.nc\n"
-			"2) python scripts/02h_fix_meta4_mask_background.py --input-nc data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask.nc --output-nc data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask_bg0.nc\n"
-			"3) python scripts/02b_split_eddy_merged_by_time.py --clean-nc data/processed/eddy_detection/19930101_20241231_clean.nc --label-nc data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask_bg0.nc"
+			"train dataset empty. Run preprocessing: python scripts/02_preprocess_eddy.py\n"
+			"(META4: scripts/02c_generate_meta4_labels.py + 02h_fix_meta4_mask_background.py per clean file, "
+			"labels/*_label_meta4_mask_bg0.nc). For merged-time mode see configs/eddy_detection/train.yaml "
+			"and scripts/02b_split_eddy_merged_by_time.py."
 		)
 
 	in_channels = args.input_steps * 3
@@ -218,6 +281,14 @@ def main() -> None:
 	)
 	best = train_eddy_segmentation(model, train_ds, val_ds, cfg, args.out_dir)
 	_log.info("training complete, best=%s", best)
+	models_dir = ROOT / "models"
+	models_dir.mkdir(parents=True, exist_ok=True)
+	eddy_deploy = models_dir / "eddy_model.pt"
+	if Path(best).is_file():
+		shutil.copy2(best, eddy_deploy)
+		_log.info("deployed best checkpoint to %s", eddy_deploy)
+	else:
+		_log.warning("best checkpoint missing, skip copy to %s", eddy_deploy)
 
 
 if __name__ == "__main__":

@@ -51,7 +51,7 @@ def main() -> None:
     ap.add_argument(
         "--label-nc",
         type=Path,
-        default=ROOT / "data/processed/eddy_detection/labels/19930101_20241231_label.nc",
+        default=ROOT / "data/processed/eddy_detection/labels/19930101_20241231_label_meta4_mask_bg0.nc",
         help="对应像素级标签文件",
     )
     ap.add_argument(

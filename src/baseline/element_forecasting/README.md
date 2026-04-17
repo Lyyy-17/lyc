@@ -8,7 +8,7 @@
 
 ## 依赖
 
-- 已运行 `scripts/02_preprocess.py`，且含 **split + stats**（`data/processed/splits/element_forecasting.json` 与 `normalization/element_forecasting_norm.json`）。
+- 已运行 `scripts/02_preprocess_element.py`，且含 **split + stats**（`data/processed/splits/element_forecasting.json` 与 `normalization/element_forecasting_norm.json`）。
 - 单日 NetCDF 时间维长度需 **≥ input_len + forecast_len**（默认 12+12）。
 
 ## 运行
@@ -21,15 +21,7 @@ python scripts/04_train_forecast.py --epochs 5 --batch-size 2
 
 使用 `utils.logger` 打日志；无 norm 文件时会 warning 并以原始数值训练。
 
-### 极少样本冒烟（不依赖真实预处理）
-
-用于验证 **Dataset → DataLoader → 模型 → 反向传播** 能否跑通：在 `outputs/smoke_element_baseline/`（已 `.gitignore`）写入合成 `fake_clean.nc`、划分与 norm，再调用训练入口。
-
-```powershell
-python scripts/smoke_element_forecast.py
-```
-
-训练入口支持 **`--manifest`** 覆盖默认 `data/processed/splits/element_forecasting.json`，便于指向上述冒烟文件。
+训练入口支持 **`--manifest`** / **`--norm`** 覆盖默认划分与标准化 JSON。
 
 ## 模块
 

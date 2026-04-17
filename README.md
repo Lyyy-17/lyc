@@ -63,27 +63,23 @@ OceanRace/
 │   ├── utils/                 # 公共工具（logger、visualization_defaults、dataset_utils、README）
 │   └── pipeline.py            # 主流程管道（占位）
 ├── models/                    # 最佳模型（从 outputs 挑选后放入，可提交）
-├── outputs/                   # 中间训练结果（checkpoint、日志等，gitignore）
-│   └── final_results/         # 最终最佳输出结果（指标、图表等，可提交）
-│       ├── eddy_detection/    # 涡旋识别
-│       ├── element_forecasting/   # 要素预报
-│       └── anomaly_detection/     # 异常检测
+├── outputs/                   # 训练与定稿输出（见下表：中间产物 gitignore，定稿子目录可按 .gitignore 提交）
+│   ├── eddy_detection/        # 涡旋：checkpoint、指标、图表等
+│   ├── element_forecasting/   # 要素预报
+│   └── anomaly_detection/     # 异常检测
 ├── scripts/                   # 命令行入口（见 scripts/README.md）
 │   ├── README.md
-│   ├── test_element/          # 要素基线/比赛检查相关
-│   │   ├── smoke_element_forecast.py      # 基线极少样本冒烟
-│   │   ├── run_element_baseline_train.py   # 要素 ConvLSTM 基线训练
-│   │   └── check_element_forecast_competition.py  # 要素比赛门槛检查（单文件/滚动等）
 │   ├── 01_data_inspect.py     # 数据探查
-│   ├── 02_preprocess.py       # 预处理
+│   ├── 02_preprocess_eddy.py / 02_preprocess_element.py / 02_preprocess_anomaly.py  # 预处理
 │   ├── 02c_generate_meta4_labels.py      # META4 对象级标签生成
 │   ├── 02h_fix_meta4_mask_background.py  # 将涡旋 mask 背景显式修正为 0
 │   ├── 02j_objects_to_mask_parallel.py   # 对象级标签转像素级 mask
 │   ├── 03_train_eddy.py       # 涡旋 U-Net 训练与评估
 │   ├── 04_train_forecast.py   # 要素预报训练
 │   ├── 05_train_anomaly.py    # 异常检测训练（支持 --baseline）
-│   ├── 06_run_pipeline.py     # 端到端流水线（占位）
-│   └── 07_generate_report.py  # 评估报告（占位）
+│   ├── 06_anomaly_assess.py   # 异常检测评估
+│   ├── 06_element_assess.py   # 要素比赛口径验收（单文件滚动等）
+│   └── 07_web_run.py          # 一键启动 Web（FastAPI + 可选 Vite）
 ├── tests/                     # 单元测试（preprocessing、models、pipeline）
 └── docs/
     └── 赛题A09_面向海洋环境智能分析系统.md
@@ -96,11 +92,10 @@ OceanRace/
 | `AGENTS.md` | **AI 编程 Prompt**（@ 引用）：logger、`visualization_defaults`、`outputs` 分层、`configs` 单一来源 |
 | `scripts/README.md` | 脚本说明、日志约定、基线实验衔接、典型流程 |
 | `scripts/01_data_inspect.py` | 只读：抽样 `data/raw`，缺测率与最值（可 `--out JSON`） |
-| `scripts/02_preprocess.py` | 清洗 → `data/processed/`，可选整合大文件（`merge`）、划分与训练集标准化（`--steps`） |
-| `scripts/test_element/smoke_element_forecast.py` | 极少样本合成数据，跑 1 epoch 验证要素基线训练链路 |
-| `scripts/test_element/run_element_baseline_train.py` | 要素 ConvLSTM 基线训练（配置见 `configs/baseline/element_forecasting/`） |
-| `scripts/test_element/check_element_forecast_competition.py` | 要素预测比赛检查（单文件模式），支持滚动预测与重叠融合评估 |
-| `scripts/03_train_eddy.py` 等 | 训练/流水线/报告脚本（`03`–`07`）；要素预报主模型用 `python scripts/04_train_forecast.py` |
+| `scripts/02_preprocess_*.py` | 各任务 raw → `data/processed/`，划分与训练集标准化；见 `scripts/README.md` |
+| `scripts/06_element_assess.py` | 要素预报比赛口径验收（单文件、滚动预测、阈值 PASS/FAIL），见 `scripts/README.md` |
+| `scripts/07_web_run.py` | 一键启动 Web 开发环境（默认同时起后端 uvicorn 与前端 Vite，支持 `--backend-only`/`--frontend-only`） |
+| `scripts/03_train_eddy.py` 等 | 涡旋/要素/异常训练与其它工具脚本；要素预报主模型用 `python scripts/04_train_forecast.py` |
 | `src/web/README.md` | Web 前端（Vue/Vite）、后端 API 与运行方式 |
 | `src/baseline/` | 基线实验代码（`PYTHONPATH=src`，如 `python -m baseline.element_forecasting.train`） |
 | `src/baseline/element_forecasting/README.md` | 要素 ConvLSTM 基线模块与运行方式 |
@@ -114,16 +109,16 @@ OceanRace/
 
 | 目录 | 说明 |
 |------|------|
-| `outputs/` | 存放**中间训练结果**（checkpoint、日志等），已 gitignore，不提交 |
+| `outputs/` | 存放训练与评估产物；**默认 gitignore**，部分子路径按 `.gitignore` 可提交定稿结果 |
 | `outputs/eddy_detection/merged_chunks/` | 涡旋清洗小文件整合后的大文件（可分块） |
 | `outputs/element_forecasting/merged_chunks/` | 要素清洗小文件整合后的大文件（可分块） |
 | `outputs/anomaly_detection/merged_chunks/` | 异常检测 `oper/wave` 清洗文件整合后的大文件（可分块） |
-| `outputs/final_results/` | 存放**最终最佳输出结果**（指标、图表等），可提交。下设三模块子目录：`eddy_detection/`、`element_forecasting/`、`anomaly_detection/` |
+| `outputs/<任务>/`（定稿子目录） | 各任务**最终汇报用**指标、图表等；与中间 checkpoint 同处 `outputs/` 下，按 `.gitignore` 区分可提交项（见 `AGENTS.md`） |
 | `models/` | 存放**最佳模型**。训练完成后从 `outputs/` 挑选最优 checkpoint，复制到 `models/` 后可提交 |
 
 ### Git 与 `.gitignore`（摘要）
 
-- **`data/raw` 大文件、`outputs/` 中间产物、`node_modules/`、虚拟环境** 等默认不提交；**`outputs/final_results/`** 与 **`models/`** 中选定成果可按需提交。
+- **`data/raw` 大文件、`outputs/` 中间产物、`node_modules/`、虚拟环境** 等默认不提交；**`outputs/` 下各任务定稿子目录**（见 `.gitignore`）与 **`models/`** 中选定成果可按需提交。
 - **`configs/`** 下任务 YAML 与仓库约定一致，宜随代码版本管理；仅敏感内容使用 `*.secret` 等机制，勿把密钥写入可提交文件。
 
 ---
@@ -134,7 +129,7 @@ OceanRace/
 
 **职责：** 处理原始 NetCDF，为训练提供干净、标准化的输入，并可将清洗后的小文件整合为大文件。
 
-**流程：** `scripts/01_data_inspect.py`（只读统计）→ `cleaner.py`（哨兵/NaN→掩膜）→ `scripts/02_preprocess.py` 落盘 `data/processed/`（可选 `merger` 整合、`splitter` 划分与训练集 \(\mu,\sigma\)）→ 各任务模块 `dataset.py` 中 `Dataset` 供训练。
+**流程：** `scripts/01_data_inspect.py`（只读统计）→ `cleaner.py`（哨兵/NaN→掩膜）→ `scripts/02_preprocess_eddy.py` / `02_preprocess_element.py` / `02_preprocess_anomaly.py` 落盘 `data/processed/`（可选 `merger` 整合、`splitter` 划分与训练集 \(\mu,\sigma\)）→ 各任务模块 `dataset.py` 中 `Dataset` 供训练。
 
 **文件：** `cleaner.py` · `io.py` · `merger.py` · `splitter.py` · `validator.py`
 
@@ -238,7 +233,7 @@ OceanRace/
 
 **训练与评估入口脚本：** `scripts/05_train_anomaly.py`（已实现）
 
-**标签与事件模板：** `scripts/05b_prepare_anomaly_eval_templates.py`（已实现）
+**标签与事件模板：** `scripts/06_anomaly_assess.py templates`（已实现）
 
 **文件：** `dataset.py` · `model.py` · `trainer.py` · `detector.py` · `evaluator.py`
 
@@ -258,7 +253,7 @@ OceanRace/
 - 要输出 `Accuracy/Precision/Recall/F1/AUC`，必须提供 `labels.json`（0/1 标签，长度与 split 样本数一致）。
 - 要输出台风关联结果，必须提供 `events.json`（含事件 `start/end` 时间窗）。
 - 推荐流程：
-    1. 运行 `python scripts/05b_prepare_anomaly_eval_templates.py --force` 生成模板；
+    1. 运行 `python scripts/06_anomaly_assess.py templates --force` 生成模板；
     2. 填写 `outputs/anomaly_detection/labels.json` 与 `outputs/anomaly_detection/events.json`；
     3. 运行 `python scripts/05_train_anomaly.py ... --labels-json ... --events-json ...` 输出监督指标与事件关联。
 

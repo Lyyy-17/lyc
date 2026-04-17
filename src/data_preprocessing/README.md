@@ -1,6 +1,6 @@
 # `src/data_preprocessing` 说明
 
-本包实现：**清洗**（`cleaner.py`）、**整合**（`merger.py`）、**划分与训练集标准化**（`splitter.py`）、**I/O**（`io.py`）、**校验**（`validator.py`）、**配置回写**（`config_sync.py`）及并行 worker（`preprocess_workers.py`）。命令行入口为项目根目录 [`scripts/02_preprocess.py`](../../scripts/02_preprocess.py)。
+本包实现：**清洗**（`cleaner.py`）、**整合**（`merger.py`）、**划分与训练集标准化**（`splitter.py`）、**I/O**（`io.py`）、**校验**（`validator.py`）、**配置回写**（`config_sync.py`）、**任务流水线**（[`task_pipelines.py`](task_pipelines.py)）及并行 worker（`preprocess_workers.py`）。命令行入口为项目根目录 [`scripts/02_preprocess_eddy.py`](../../scripts/02_preprocess_eddy.py) / [`02_preprocess_element.py`](../../scripts/02_preprocess_element.py) / [`02_preprocess_anomaly.py`](../../scripts/02_preprocess_anomaly.py)，以及 [`sync_data_config.py`](../../scripts/sync_data_config.py)、[`validate_processed.py`](../../scripts/validate_processed.py)。
 
 运行脚本或导入本包前，在项目根目录将 `src` 加入 `PYTHONPATH`（PowerShell：`$env:PYTHONPATH = "src"`）。日志约定见 [`../utils/README.md`](../utils/README.md)。
 
@@ -12,7 +12,7 @@
 
 路径根均相对于**项目根目录**；与 [`configs/data_config.yaml`](../../configs/data_config.yaml) 中 `paths.raw` / `paths.processed` 一一对应（默认如下）。
 
-| 任务（CLI `--task`） | 配置键 `paths.raw.*` / `paths.processed.*` | splitter 内部任务名 | 原始数据形态 | 清洗后产出 |
+| 任务（预处理脚本） | 配置键 `paths.raw.*` / `paths.processed.*` | splitter 内部任务名 | 原始数据形态 | 清洗后产出 |
 |----------------------|--------------------------------------------|----------------------|--------------|------------|
 | `eddy` | `eddy` → `eddy_detection/` | `eddy` | `*.nc` 平铺在 `data/raw/eddy_detection/` | `data/processed/eddy_detection/*_clean.nc` |
 | `element` | `element_forecasting` → `element_forecasting/` | `element_forecasting` | `YYYYMMDD.nc` 在 `data/raw/element_forecasting/` | `data/processed/element_forecasting/*_clean.nc` |
@@ -32,50 +32,35 @@
 | 配置块 | 作用 |
 |--------|------|
 | `project.root` | 一般为 `.`；脚本以项目根为基准解析相对路径。 |
-| `paths.raw` / `paths.processed` | 三任务 raw、processed 子目录；**必须与磁盘实际目录一致**，否则 `02_preprocess.py` 找不到输入或写错位置。 |
+| `paths.raw` / `paths.processed` | 三任务 raw、processed 子目录；**必须与磁盘实际目录一致**，否则预处理脚本找不到输入或写错位置。 |
 | `paths.splits` / `paths.normalization` | 划分清单与标准化 JSON 的输出目录；`splitter` / `validator` / `config_sync` 均读此处。 |
 | `split.train_ratio` / `val_ratio` / `test_ratio` / `seed` | `run_split_for_task` 使用的比例与随机种子（三者之和应为 1）。 |
 | `fill.eddy_float` / `fill.element` | 涡旋、要素浮点哨兵值，清洗时转为 NaN 并写 `*_valid`。异常任务风/浪用 NaN 掩膜，哨兵见 `cleaner` 内逻辑。 |
 | `output.compression` / `output.complevel` | 写出 NetCDF 时压缩；`complevel` 由 worker 传入（默认 4）。 |
 | `batch.max_files_eddy` / `max_files_element` / `max_files_anomaly_years` | 未传 `--limit` 时作为清洗数量上限；`null` 表示不限制。若命令行传了 `--limit`，以命令行为准。 |
-| `artifacts.*` / `standardization.*` | 运行 `--steps` 含 `stats` 后，由 `config_sync.merge_pipeline_artifacts_into_config` **回写**到本 YAML（清单路径、样本数、各变量 mean/std 等）。 |
+| `artifacts.*` / `standardization.*` | 各任务流水线在写出 `normalization/*_norm.json` 后，由 `config_sync.merge_pipeline_artifacts_into_config` **回写**到本 YAML（清单路径、样本数、各变量 mean/std 等）。 |
 
 仅同步配置、不跑清洗时：
 
 ```powershell
-python scripts/02_preprocess.py --sync-config-only
+python scripts/sync_data_config.py
 ```
 
 ---
 
-## 3. `scripts/02_preprocess.py` 典型命令
+## 3. 命令行典型用法
 
-均在**项目根目录**执行；需要时已设置 `PYTHONPATH=src`（脚本会把 `src` 加入 `sys.path`，一般可直接运行）。
+均在**项目根目录**执行；脚本会把 `src` 加入 `sys.path`。更全的示例见 [`../../scripts/README.md`](../../scripts/README.md)。
 
 | 场景 | 命令示例 |
 |------|----------|
-| 三任务只做清洗（默认） | `python scripts/02_preprocess.py --task all` |
-| 单任务清洗 + 限制文件数（调试） | `python scripts/02_preprocess.py --task eddy --limit 2` |
-| 按时序合并清洗后样本 | `python scripts/02_preprocess.py --task element --steps merge` |
-| 清洗后立即合并 | `python scripts/02_preprocess.py --task all --steps clean,merge` |
-| 按分块整合（每 120 个小文件输出 1 个大文件） | `python scripts/02_preprocess.py --task element --steps merge --merge-files-per-output 120` |
-| 清洗并行进程数 | `python scripts/02_preprocess.py --task all -j 4` |
-| 清洗后做划分 + 训练集 μ/σ + 回写配置 | `python scripts/02_preprocess.py --task all --steps clean,split,stats` 或 `--steps all` |
-| 已有清洗结果，只划分与统计 | `python scripts/02_preprocess.py --task all --steps split,stats` |
-| 仅校验（manifest 路径 + processed 抽检） | `python scripts/02_preprocess.py --steps validate` |
-| 其它步骤完成后追加校验 | `python scripts/02_preprocess.py --task all --steps clean --validate` |
-| 大数据量时限制校验样本数 | `python scripts/02_preprocess.py --steps validate --validate-limit 50` |
-| 指定配置 | `python scripts/02_preprocess.py --config configs/data_config.yaml` |
+| 涡旋 raw → 可训练 | `python scripts/02_preprocess_eddy.py -j 4 --validate` |
+| 要素 raw → 可训练（含 merge 出 `all_clean_merged.nc`） | `python scripts/02_preprocess_element.py -j 4 --validate` |
+| 异常 raw → 可训练 | `python scripts/02_preprocess_anomaly.py -j 4 --validate` |
+| 仅回写 `data_config.yaml` | `python scripts/sync_data_config.py` |
+| 三任务 manifest + 抽检 | `python scripts/validate_processed.py --validate-limit 50` |
 
-**`--steps`（与 `--stage` 同义）取值：** `clean` · `merge` · `split` · `stats` · `validate` · `all`（`all` = clean + split + stats，不含单独 `validate`，需另加 `--validate` 或 `--steps validate`）。
-
-**merge 默认输出：**
-
-- `eddy` → `outputs/eddy_detection/merged_chunks/`
-- `element` → `outputs/element_forecasting/merged_chunks/`
-- `anomaly` → `outputs/anomaly_detection/merged_chunks/`（`oper` 与 `wave` 分流输出）
-
-**说明：** `stats` 步会读对应任务的 `splits/*.json` 中 `train` 路径估计标准化；跑 `stats` 后脚本会调用 `merge_pipeline_artifacts_into_config` 更新 `data_config.yaml` 中的 artifacts / standardization 等字段。
+**说明：** 标准化统计会读对应任务的 `splits/*.json` 中 `train` 路径；流水线结束时会调用 `merge_pipeline_artifacts_into_config` 更新 `data_config.yaml`。
 
 ---
 
@@ -89,7 +74,9 @@ python scripts/02_preprocess.py --sync-config-only
 | `splitter.py` | 列举 processed 样本、划分、`compute_train_standardization`、写 manifest 与 norm JSON。 |
 | `validator.py` | 清洗结果与划分清单质量检查。 |
 | `config_sync.py` | 将磁盘上的 splits / normalization 摘要合并回 `data_config.yaml`。 |
-| `preprocess_workers.py` | 供 `02_preprocess` 多进程调用的单文件/单年清洗函数。 |
+| `preprocess_workers.py` | 供多进程调用的单文件/单年清洗函数。 |
+| `task_pipelines.py` | 三任务「raw → clean →（可选 merge/标签）→ split → stats」编排。 |
+| `meta4_eddy_labels.py` | 涡旋：对每个 `*_clean.nc` 调用 `02c`+`02h` 生成 `*_label_meta4_mask_bg0.nc`。 |
 
 ---
 

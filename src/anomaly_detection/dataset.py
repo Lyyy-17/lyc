@@ -1,6 +1,6 @@
 """风-浪异常：从 `data/processed/anomaly_detection` 读取各年 `oper_clean` + `wave_clean`。
 
-使用前请先运行 `python scripts/02_preprocess.py`；可选 `--steps clean,split,stats`。
+使用前请先运行 `python scripts/02_preprocess_anomaly.py`（或等价：raw 清洗 + split + stats）。
 """
 from __future__ import annotations
 

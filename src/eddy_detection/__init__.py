@@ -1,5 +1,3 @@
-from .labeler import EddyLabelConfig, generate_labels_for_clean_file
-
 try:
 	from .dataset import EddyCleanDataset, EddySegmentationDataset
 except Exception:  # pragma: no cover
@@ -14,7 +12,5 @@ except Exception:  # pragma: no cover
 __all__ = [
 	"EddyCleanDataset",
 	"EddySegmentationDataset",
-	"EddyLabelConfig",
-	"generate_labels_for_clean_file",
 	"EddyUNet",
 ]

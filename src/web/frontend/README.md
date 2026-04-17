@@ -2,6 +2,8 @@
 
 本应用是 **OceanRace 海洋环境智能分析系统** 的前端展示大屏，基于 Vue 3 `<script setup>` 和 TailwindCSS 构建，核心图表由 Plotly.js 驱动。提供“要素预测”与“异常检测”等模块的动态可视化。
 
+**目录约定**：HTTP 请求统一走 `src/api/client.ts` 导出的 `api`（`baseURL: '/api'`）；大屏主逻辑仍在 `App.vue`，后续可再拆为 `components/` 与各模块 `composables/`。
+
 ---
 
 ## 🚀 快速开始

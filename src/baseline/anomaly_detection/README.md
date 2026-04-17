@@ -40,7 +40,7 @@ python scripts/05_train_anomaly.py --baseline --labels-json outputs/anomaly_dete
 先分别跑主模型与 AE baseline（得到各自 `summary.json` 与 `split_reports.json`），再运行：
 
 ```bash
-python scripts/05c_compare_anomaly_methods.py
+python scripts/06_anomaly_assess.py compare
 ```
 
 输出：
@@ -48,4 +48,4 @@ python scripts/05c_compare_anomaly_methods.py
 - `outputs/baseline/anomaly_detection_traditional/summary.json`
 - `outputs/baseline/anomaly_detection_traditional/split_reports.json`
 - `outputs/baseline/anomaly_detection_traditional/comparison_report.json`
-- `outputs/final_results/anomaly_detection/anomaly_methods_comparison.json`
+- `outputs/anomaly_detection/anomaly_methods_comparison.json`
