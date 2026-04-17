@@ -60,6 +60,19 @@ FastAPI 后端已接入，负责承接前端请求并串联涡旋、要素与异
 python -m uvicorn src.web.backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
+如本机命令是 `python3`，可使用：
+
+```bash
+python3 -m uvicorn src.web.backend.app.main:app --host 0.0.0.0 --port 8000
+```
+
+> 当前后端以 ASGI 方式运行，推荐使用上述 `uvicorn ...:app` 命令；不再建议使用 `python main.py` 直接启动。
+
+启动后可快速检查：
+
+* 健康检查: `http://127.0.0.1:8000/healthz`
+* OpenAPI 文档: `http://127.0.0.1:8000/docs`
+
 ### 通信接口
 
 默认暴露于 `http://127.0.0.1:8000/api`，前端开发服务器通过 Vite 代理转发 `/api` 请求。

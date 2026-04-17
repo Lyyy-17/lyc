@@ -10,6 +10,8 @@ import json
 import tempfile
 import asyncio
 import uuid
+from time import perf_counter
+from threading import Lock
 
 # Reduce random native runtime crashes in mixed NumPy/PyTorch OpenMP environments.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -34,6 +36,9 @@ from src.eddy_detection.dataset import EddySegmentationDataset
 from src.eddy_detection.model import EddyUNet
 from src.eddy_detection.predictor import infer_batch_to_objects, load_checkpoint
 from src.eddy_detection.postprocess import extract_eddy_objects
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 app = FastAPI(title="OceanRace Backend API")
 
@@ -127,6 +132,12 @@ class AnomalyInspectRequest(BaseModel):
 prediction_cache = {}
 eddy_prediction_cache = {}
 anomaly_timestamps_cache: dict[tuple[str, str, str], list[int]] = {}
+eddy_model_cache: dict[tuple[str, int, int, str, int, int], EddyUNet] = {}
+eddy_dataset_meta_cache: dict[str, dict[str, Any]] = {}
+eddy_norm_cache: dict[str, Any] = {"path": "", "variables": {}}
+eddy_dataset_handle_cache: dict[str, dict[str, Any]] = {}
+eddy_window_cache: dict[tuple[str, int, int, int, int], dict[str, Any]] = {}
+eddy_cache_lock = Lock()
 
 
 def _to_epoch_seconds(ts_raw: int) -> int:
@@ -251,13 +262,123 @@ def _load_eddy_norm_variables() -> dict[str, dict[str, float]]:
     norm_path = resolve_path("data/processed/normalization/eddy_norm.json")
     if not os.path.exists(norm_path):
         return {}
+    if eddy_norm_cache.get("path") == norm_path:
+        cached = eddy_norm_cache.get("variables", {})
+        if isinstance(cached, dict):
+            return cached
     try:
         with open(norm_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
         variables = payload.get("variables", {})
-        return variables if isinstance(variables, dict) else {}
+        variables = variables if isinstance(variables, dict) else {}
+        eddy_norm_cache["path"] = norm_path
+        eddy_norm_cache["variables"] = variables
+        return variables
     except Exception:
         return {}
+
+
+def _file_signature(path: str) -> tuple[int, int]:
+    st = os.stat(path)
+    return (int(st.st_mtime_ns), int(st.st_size))
+
+
+def _get_cached_eddy_dataset_handle(data_path: str) -> dict[str, Any]:
+    sig = _file_signature(data_path)
+    with eddy_cache_lock:
+        cached = eddy_dataset_handle_cache.get(data_path)
+        if cached is not None and cached.get("sig") == sig:
+            return cached
+
+        # File changed (or first load): close stale handle first.
+        if cached is not None:
+            try:
+                cached.get("ds").close()
+            except Exception:
+                pass
+
+        ds = xr.open_dataset(data_path)
+        payload = {
+            "sig": sig,
+            "ds": ds,
+        }
+        eddy_dataset_handle_cache[data_path] = payload
+
+        # Keep cache bounded: close and evict older paths.
+        if len(eddy_dataset_handle_cache) > 3:
+            for k in list(eddy_dataset_handle_cache.keys())[:-3]:
+                if k == data_path:
+                    continue
+                old = eddy_dataset_handle_cache.pop(k, None)
+                if old is not None:
+                    try:
+                        old.get("ds").close()
+                    except Exception:
+                        pass
+        return payload
+
+
+def _get_cached_eddy_model(
+    *,
+    model_path: str,
+    in_channels: int,
+    base_channels: int,
+    device: str,
+) -> EddyUNet:
+    model_sig = _file_signature(model_path)
+    cache_key = (
+        model_path,
+        int(in_channels),
+        int(base_channels),
+        str(device),
+        model_sig[0],
+        model_sig[1],
+    )
+    cached = eddy_model_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # Drop stale cache entries for the same logical model/device to keep memory bounded.
+    stale_keys = [
+        k
+        for k in eddy_model_cache.keys()
+        if k[0] == model_path and k[1] == int(in_channels) and k[2] == int(base_channels) and k[3] == str(device)
+    ]
+    for k in stale_keys:
+        eddy_model_cache.pop(k, None)
+
+    model = EddyUNet(in_channels=int(in_channels), num_classes=3, base_channels=int(base_channels))
+    load_checkpoint(model, model_path, map_location=device)
+    model = model.to(device)
+    model.eval()
+    eddy_model_cache[cache_key] = model
+    return model
+
+
+def _get_cached_eddy_dataset_meta(data_path: str) -> dict[str, Any]:
+    handle = _get_cached_eddy_dataset_handle(data_path)
+    sig = handle["sig"]
+    with eddy_cache_lock:
+        cached = eddy_dataset_meta_cache.get(data_path)
+        if cached is not None and cached.get("sig") == sig:
+            return cached
+
+    ds = handle["ds"]
+    tvals = pd.to_datetime(ds["time"].values) if "time" in ds else pd.DatetimeIndex([])
+    lat = np.asarray(ds["latitude"].values, dtype=np.float32) if "latitude" in ds else np.array([], dtype=np.float32)
+    lon = np.asarray(ds["longitude"].values, dtype=np.float32) if "longitude" in ds else np.array([], dtype=np.float32)
+
+    payload = {
+        "sig": sig,
+        "tvals": tvals,
+        "lat": lat,
+        "lon": lon,
+        "lat_list": lat.tolist(),
+        "lon_list": lon.tolist(),
+    }
+    with eddy_cache_lock:
+        eddy_dataset_meta_cache[data_path] = payload
+    return payload
 
 
 def _standardize_eddy(arr: np.ndarray, var_name: str, stats: dict[str, dict[str, float]]) -> np.ndarray:
@@ -279,52 +400,76 @@ def _build_unlabeled_eddy_batch(
     input_steps: int,
     horizon_steps: int,
 ) -> tuple[torch.Tensor, list[int], list[np.ndarray], int]:
-    ds = xr.open_dataset(data_path)
-    try:
-        for v in ("adt", "ugos", "vgos"):
-            if v not in ds:
-                raise HTTPException(status_code=400, detail=f"Dataset missing variable: {v}")
+    handle = _get_cached_eddy_dataset_handle(data_path)
+    ds = handle["ds"]
+    sig = handle["sig"]
 
-        tlen = int(ds["adt"].shape[0])
-        if tlen <= 0:
-            raise HTTPException(status_code=400, detail="Dataset time axis is empty")
+    for v in ("adt", "ugos", "vgos"):
+        if v not in ds:
+            raise HTTPException(status_code=400, detail=f"Dataset missing variable: {v}")
 
-        max_index = max(0, tlen - input_steps)
-        if start_idx < 0 or start_idx > max_index:
-            raise HTTPException(status_code=400, detail="Start index out of range")
+    tlen = int(ds["adt"].shape[0])
+    if tlen <= 0:
+        raise HTTPException(status_code=400, detail="Dataset time axis is empty")
 
-        end_idx = min(max_index + 1, start_idx + horizon_steps)
-        stats = _load_eddy_norm_variables()
+    max_index = max(0, tlen - input_steps)
+    if start_idx < 0 or start_idx > max_index:
+        raise HTTPException(status_code=400, detail="Start index out of range")
 
-        x_list: list[torch.Tensor] = []
-        time_indices: list[int] = []
-        adt_maps: list[np.ndarray] = []
+    cache_key = (data_path, sig[0], sig[1], int(start_idx), int(input_steps))
+    with eddy_cache_lock:
+        cached = eddy_window_cache.get(cache_key)
+    if cached is not None:
+        return (
+            cached["x_batch"].clone(),
+            list(cached["time_indices"]),
+            [np.asarray(m, dtype=np.float32).copy() for m in cached["adt_maps"]],
+            int(cached["max_index"]),
+        )
 
-        for t in range(start_idx, end_idx):
-            t0 = t
-            t1 = t + input_steps
-            adt_seq = np.asarray(ds["adt"].values[t0:t1], dtype=np.float32)
-            ugos_seq = np.asarray(ds["ugos"].values[t0:t1], dtype=np.float32)
-            vgos_seq = np.asarray(ds["vgos"].values[t0:t1], dtype=np.float32)
+    end_idx = min(max_index + 1, start_idx + horizon_steps)
+    stats = _load_eddy_norm_variables()
 
-            adt_std = _standardize_eddy(adt_seq, "adt", stats)
-            ugos_std = _standardize_eddy(ugos_seq, "ugos", stats)
-            vgos_std = _standardize_eddy(vgos_seq, "vgos", stats)
+    x_list: list[torch.Tensor] = []
+    time_indices: list[int] = []
+    adt_maps: list[np.ndarray] = []
 
-            stacked = np.stack([adt_std, ugos_std, vgos_std], axis=1)  # (T,3,H,W)
-            x_np = stacked.reshape(-1, stacked.shape[-2], stacked.shape[-1])
-            x_list.append(torch.from_numpy(x_np))
+    for t in range(start_idx, end_idx):
+        t0 = t
+        t1 = t + input_steps
+        # Slice first, then materialize values; avoids loading full variable into memory.
+        adt_seq = np.asarray(ds["adt"].isel(time=slice(t0, t1)).values, dtype=np.float32)
+        ugos_seq = np.asarray(ds["ugos"].isel(time=slice(t0, t1)).values, dtype=np.float32)
+        vgos_seq = np.asarray(ds["vgos"].isel(time=slice(t0, t1)).values, dtype=np.float32)
 
-            time_indices.append(int(t + input_steps - 1))
-            adt_maps.append(np.asarray(adt_seq[-1], dtype=np.float32))
+        adt_std = _standardize_eddy(adt_seq, "adt", stats)
+        ugos_std = _standardize_eddy(ugos_seq, "ugos", stats)
+        vgos_std = _standardize_eddy(vgos_seq, "vgos", stats)
 
-        if not x_list:
-            raise HTTPException(status_code=400, detail="No samples available for selected date")
+        stacked = np.stack([adt_std, ugos_std, vgos_std], axis=1)  # (T,3,H,W)
+        x_np = stacked.reshape(-1, stacked.shape[-2], stacked.shape[-1])
+        x_list.append(torch.from_numpy(x_np))
 
-        x_batch = torch.stack(x_list, dim=0)
-        return x_batch, time_indices, adt_maps, max_index
-    finally:
-        ds.close()
+        time_indices.append(int(t + input_steps - 1))
+        adt_maps.append(np.asarray(adt_seq[-1], dtype=np.float32))
+
+    if not x_list:
+        raise HTTPException(status_code=400, detail="No samples available for selected date")
+
+    x_batch = torch.stack(x_list, dim=0).contiguous()
+    with eddy_cache_lock:
+        eddy_window_cache[cache_key] = {
+            "x_batch": x_batch,
+            "time_indices": list(time_indices),
+            "adt_maps": [np.asarray(m, dtype=np.float32).copy() for m in adt_maps],
+            "max_index": int(max_index),
+        }
+        # Bound cache size to avoid uncontrolled memory growth.
+        if len(eddy_window_cache) > 64:
+            for k in list(eddy_window_cache.keys())[:-64]:
+                eddy_window_cache.pop(k, None)
+
+    return x_batch.clone(), time_indices, adt_maps, max_index
 
 
 def _field_2d(step_data: list[dict[str, Any]], var_name: str) -> np.ndarray | None:
@@ -452,6 +597,43 @@ def get_default_data_path():
     return {"path": ""}
 
 
+@app.post("/api/dataset-info")
+def get_dataset_info(req: DatasetInfoRequest):
+    data_path = resolve_path(req.data_path.strip('"\''))
+    if not os.path.exists(data_path):
+        raise HTTPException(status_code=404, detail=f"Data file not found: {data_path}")
+
+    try:
+        norm_path = resolve_path("data/processed/normalization/element_forecasting_norm.json")
+        dataset = ElementForecastWindowDataset(
+            data_file=data_path,
+            input_steps=24,
+            output_steps=72,
+            split=None,
+            norm_stats_path=norm_path,
+        )
+
+        if len(dataset) == 0:
+            raise HTTPException(status_code=400, detail="Dataset is empty or insufficient steps")
+
+        ds = xr.open_dataset(data_path)
+        try:
+            times = pd.to_datetime(ds["time"].values)
+            first_time = times[dataset._windows[0]].strftime("%Y-%m-%d %H:%M:%S")
+            last_time = times[dataset._windows[-1]].strftime("%Y-%m-%d %H:%M:%S")
+        finally:
+            ds.close()
+
+        return {
+            "max_index": len(dataset) - 1,
+            "info": f"可用预测窗口: {len(dataset)}\n第一步: {first_time}\n最后一步: {last_time}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/eddy/default-paths")
 def get_default_eddy_paths():
     clean_path, _ = _default_eddy_paths()
@@ -569,6 +751,7 @@ def _extract_centers_from_mask(mask: np.ndarray, min_region_pixels: int = 16) ->
 
 @app.post("/api/eddy/predict-day")
 async def run_eddy_prediction_day(req: EddyPredictDayRequest):
+    t0_total = perf_counter()
     try:
         model_path = resolve_path(req.model_path)
         data_path = resolve_path(str(req.data_path).strip().strip('"\''))
@@ -578,6 +761,7 @@ async def run_eddy_prediction_day(req: EddyPredictDayRequest):
             raise HTTPException(status_code=404, detail=f"Data file not found: {data_path}")
 
         input_steps = max(1, int(req.input_steps))
+        t0_read = perf_counter()
         x_batch, time_indices, adt_maps, _ = await asyncio.to_thread(
             _build_unlabeled_eddy_batch,
             data_path=data_path,
@@ -585,26 +769,30 @@ async def run_eddy_prediction_day(req: EddyPredictDayRequest):
             input_steps=input_steps,
             horizon_steps=1,
         )
+        t_read = perf_counter() - t0_read
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = EddyUNet(in_channels=x_batch.shape[1], num_classes=3, base_channels=req.base_channels)
-        load_checkpoint(model, model_path, map_location=device)
-        model = model.to(device)
+        t0_infer = perf_counter()
+        model = _get_cached_eddy_model(
+            model_path=model_path,
+            in_channels=int(x_batch.shape[1]),
+            base_channels=int(req.base_channels),
+            device=device,
+        )
         results = infer_batch_to_objects(model, x_batch, device, min_region_pixels=req.min_region_pixels)
-        del model, x_batch
+        del x_batch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        t_infer = perf_counter() - t0_infer
 
         if not results:
             raise HTTPException(status_code=500, detail="Empty model output for selected day")
 
-        ds = xr.open_dataset(data_path)
-        try:
-            tvals = pd.to_datetime(ds["time"].values) if "time" in ds else []
-            lat = np.asarray(ds["latitude"].values, dtype=np.float32) if "latitude" in ds else np.array([])
-            lon = np.asarray(ds["longitude"].values, dtype=np.float32) if "longitude" in ds else np.array([])
-        finally:
-            ds.close()
+        t0_post = perf_counter()
+        meta = _get_cached_eddy_dataset_meta(data_path)
+        tvals = meta.get("tvals", pd.DatetimeIndex([]))
+        lat = np.asarray(meta.get("lat", np.array([], dtype=np.float32)), dtype=np.float32)
+        lon = np.asarray(meta.get("lon", np.array([], dtype=np.float32)), dtype=np.float32)
 
         res0 = results[0]
         pred_mask = np.asarray(res0.get("mask"), dtype=np.int32)
@@ -633,6 +821,18 @@ async def run_eddy_prediction_day(req: EddyPredictDayRequest):
             day_label = str(tvals[t_index])[:10]
         else:
             day_label = f"idx_{int(req.day_index)}"
+        t_post = perf_counter() - t0_post
+        t_total = perf_counter() - t0_total
+
+        logger.info(
+            "eddy predict-day timing | day_index=%s device=%s read=%.3fs infer=%.3fs post=%.3fs total=%.3fs",
+            int(req.day_index),
+            device,
+            t_read,
+            t_infer,
+            t_post,
+            t_total,
+        )
 
         return {
             "day_index": int(req.day_index),
@@ -774,19 +974,21 @@ async def run_eddy_prediction(req: EddyPredictRequest):
         )
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = EddyUNet(in_channels=x_batch.shape[1], num_classes=3, base_channels=req.base_channels)
-        load_checkpoint(model, model_path, map_location=device)
-        model = model.to(device)
+        model = _get_cached_eddy_model(
+            model_path=model_path,
+            in_channels=int(x_batch.shape[1]),
+            base_channels=int(req.base_channels),
+            device=device,
+        )
 
         results = infer_batch_to_objects(model, x_batch, device, min_region_pixels=req.min_region_pixels)
-        del model, x_batch
+        del x_batch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        ds_for_coords = xr.open_dataset(data_path)
-        lat_coords = ds_for_coords["latitude"].values.tolist()
-        lon_coords = ds_for_coords["longitude"].values.tolist()
-        ds_for_coords.close()
+        meta = _get_cached_eddy_dataset_meta(data_path)
+        lat_coords = meta.get("lat_list", [])
+        lon_coords = meta.get("lon_list", [])
 
         steps = []
         for i, res in enumerate(results):
@@ -852,6 +1054,78 @@ def extract_mask(mask_numpy, t_idx, c_idx, H, W):
     elif mask_numpy.ndim == 4:
         return mask_numpy[min(t_idx, mask_numpy.shape[0] - 1), min(c_idx, mask_numpy.shape[1] - 1)]
     return mask_numpy
+
+
+@app.get("/api/predict/{session_id}/step/{step_idx}")
+def get_prediction_step(session_id: str, step_idx: int):
+    if session_id not in prediction_cache:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    state = prediction_cache[session_id]
+    pred = state["pred"]
+    mask = state["mask"]
+    vars_names = state["vars"]
+
+    if step_idx < 0 or step_idx >= pred.shape[0]:
+        raise HTTPException(status_code=400, detail="Step out of range")
+
+    step_data = pred[step_idx]
+    h, w = step_data.shape[1], step_data.shape[2]
+
+    response_data = []
+    for i in range(min(4, step_data.shape[0])):
+        data_slice = step_data[i].copy()
+        mask_slice = extract_mask(mask, step_idx, i, h, w)
+        if mask_slice is not None and mask_slice.shape == (h, w):
+            data_slice[mask_slice < 0.5] = np.nan
+
+        data_slice = np.where(np.isnan(data_slice), None, data_slice)
+        response_data.append({
+            "var": vars_names[i],
+            "data": data_slice.tolist(),
+        })
+
+    return {"step": step_idx, "data": response_data}
+
+
+@app.get("/api/predict/{session_id}/curve")
+def get_prediction_curve(session_id: str, r: int = None, c: int = None):
+    if session_id not in prediction_cache:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    state = prediction_cache[session_id]
+    pred_numpy = state["pred"]
+    mask_numpy = state["mask"]
+    var_names = state["vars"]
+
+    num_steps, _, h, w = pred_numpy.shape
+    response_data = []
+
+    use_point = False
+    if r is not None and c is not None and 0 <= r < h and 0 <= c < w:
+        use_point = True
+
+    for i in range(min(4, pred_numpy.shape[1])):
+        mean_vals = []
+        for t in range(num_steps):
+            data_slice = pred_numpy[t, i]
+            if use_point:
+                val = data_slice[r, c]
+                mean_vals.append(float(val) if not np.isnan(val) else None)
+            else:
+                mask_slice = extract_mask(mask_numpy, t, i, h, w)
+                if mask_slice is not None and mask_slice.shape == (h, w):
+                    valid_data = data_slice[mask_slice >= 0.5]
+                else:
+                    valid_data = data_slice[~np.isnan(data_slice)]
+                mean_vals.append(float(np.mean(valid_data)) if len(valid_data) > 0 else None)
+
+        response_data.append({
+            "var": var_names[i],
+            "means": mean_vals,
+        })
+
+    return {"data": response_data, "point": {"r": r, "c": c} if use_point else None}
 
 
 @app.get("/api/eddy/predict/{session_id}/step/{step_idx}")
@@ -920,3 +1194,120 @@ def get_eddy_reference_image(session_id: str, step_idx: int):
         raise HTTPException(status_code=404, detail=f"Reference image not found for run={run_tag}, time_index={time_index}")
 
     return FileResponse(path=ref, media_type="image/png", filename=ref.name)
+
+
+@app.post("/api/anomaly/inspect")
+def inspect_anomaly(req: AnomalyInspectRequest):
+    split = str(req.split).strip().lower()
+    if split not in {"train", "val", "test"}:
+        raise HTTPException(status_code=400, detail="split must be one of train/val/test")
+
+    labels_path = resolve_path(req.labels_json.strip('"\''))
+    events_path = resolve_path(req.events_json.strip('"\''))
+    manifest_path = resolve_path(req.manifest_path.strip('"\''))
+    processed_dir = resolve_path(req.processed_dir.strip('"\''))
+    norm_stats_path = resolve_path(req.norm_stats_path.strip('"\''))
+
+    if not os.path.exists(labels_path):
+        raise HTTPException(status_code=404, detail=f"labels file not found: {labels_path}")
+    if not os.path.exists(events_path):
+        raise HTTPException(status_code=404, detail=f"events file not found: {events_path}")
+    if not os.path.exists(manifest_path):
+        raise HTTPException(status_code=404, detail=f"manifest file not found: {manifest_path}")
+
+    try:
+        with open(labels_path, "r", encoding="utf-8") as f:
+            labels_obj = json.load(f)
+        with open(events_path, "r", encoding="utf-8") as f:
+            events_obj = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid json: {e}")
+
+    if not isinstance(labels_obj, dict):
+        raise HTTPException(status_code=400, detail="labels_json must be an object with split keys")
+
+    split_labels_raw = labels_obj.get(split)
+    if not isinstance(split_labels_raw, list):
+        raise HTTPException(status_code=400, detail=f"labels_json missing list for split={split}")
+
+    labels = [1 if int(v) == 1 else 0 for v in split_labels_raw]
+
+    events: list[dict] = []
+    if isinstance(events_obj, list):
+        for ev in events_obj:
+            if not isinstance(ev, dict) or "start" not in ev or "end" not in ev:
+                continue
+            try:
+                start = int(ev["start"])
+                end = int(ev["end"])
+            except Exception:
+                continue
+            if end < start:
+                continue
+            events.append({"name": str(ev.get("name", "event")), "start": start, "end": end})
+
+    cache_key = (processed_dir, manifest_path, split)
+    cached_timestamps = anomaly_timestamps_cache.get(cache_key)
+    if cached_timestamps is None:
+        ds = AnomalyFrameDataset(
+            processed_anomaly_dir=processed_dir,
+            split=split,
+            manifest_path=manifest_path,
+            norm_stats_path=norm_stats_path if os.path.exists(norm_stats_path) else None,
+            open_file_lru_size=max(0, int(req.open_file_lru_size)),
+        )
+        try:
+            timestamps = [_to_epoch_seconds(ts) for ts in ds.get_timestamps()]
+        finally:
+            ds.close()
+        anomaly_timestamps_cache[cache_key] = timestamps
+    else:
+        timestamps = cached_timestamps
+
+    n_pair = min(len(labels), len(timestamps))
+    if n_pair == 0:
+        raise HTTPException(status_code=400, detail="empty split after loading labels/timestamps")
+
+    if len(labels) != len(timestamps):
+        labels = labels[:n_pair]
+        timestamps = timestamps[:n_pair]
+
+    def _hit_events(ts: int) -> list[str]:
+        if ts < 0:
+            return []
+        return [ev["name"] for ev in events if ev["start"] <= ts <= ev["end"]]
+
+    positive_points: list[dict] = []
+    matched_positive = 0
+    matched_event_names: set[str] = set()
+
+    for idx, (y, ts) in enumerate(zip(labels, timestamps)):
+        if y != 1:
+            continue
+        hits = _hit_events(ts)
+        if hits:
+            matched_positive += 1
+            matched_event_names.update(hits)
+        positive_points.append({
+            "index": idx,
+            "timestamp": ts,
+            "event_hits": hits,
+            "matched": bool(hits),
+        })
+
+    max_points = max(1, int(req.max_points))
+    preview = positive_points[:max_points]
+
+    return {
+        "split": split,
+        "num_samples": n_pair,
+        "num_positive": int(sum(labels)),
+        "positive_ratio": float(sum(labels) / n_pair),
+        "num_events": len(events),
+        "matched_positive": matched_positive,
+        "matched_positive_ratio": float(matched_positive / max(1, sum(labels))),
+        "matched_event_count": len(matched_event_names),
+        "points": preview,
+        "truncated": len(positive_points) > len(preview),
+        "labels_timestamps_aligned": len(split_labels_raw) == len(timestamps),
+    }
