@@ -4,6 +4,7 @@ import { api } from '../api/client'
 const anomalyLabelsPath = ref('outputs/anomaly_detection/labels_competition.json')
 const anomalyEventsPath = ref('outputs/anomaly_detection/events_competition.json')
 const anomalyManifestPath = ref('data/processed/splits/anomaly_detection_competition.json')
+const anomalyProcessedPath = ref('data/processed/anomaly_detection/path.txt')
 const anomalySplit = ref('test')
 const anomalyLoading = ref(false)
 const anomalyError = ref('')
@@ -194,6 +195,7 @@ const loadAnomalyOverview = async () => {
       labels_json: anomalyLabelsPath.value,
       events_json: anomalyEventsPath.value,
       manifest_path: anomalyManifestPath.value,
+      processed_dir: anomalyProcessedPath.value,
       split: anomalySplit.value,
       max_points: 300
     }, {
@@ -234,6 +236,7 @@ export function useAnomaly() {
     anomalyLabelsPath,
     anomalyEventsPath,
     anomalyManifestPath,
+    anomalyProcessedPath,
     anomalySplit,
     anomalyLoading,
     anomalyError,

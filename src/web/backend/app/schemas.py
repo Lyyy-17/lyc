@@ -48,7 +48,7 @@ class AnomalyInspectRequest(BaseModel):
     labels_json: str
     events_json: str
     manifest_path: str = "data/processed/splits/anomaly_detection_competition.json"
-    processed_dir: str = "data/processed/anomaly_detection"
+    processed_dir: str = "data/processed/anomaly_detection/path.txt"
     norm_stats_path: str = "data/processed/normalization/anomaly_detection_norm.json"
     split: str = "test"
     open_file_lru_size: int = 32

@@ -5,7 +5,7 @@ import Plotly from 'plotly.js-dist-min'
 import { getChartLayoutBase } from './plotly/chartLayout'
 
 const modelPath = ref('models/forecast_model.pt')
-const dataPath = ref('data/processed/element_forecasting/示例数据.nc')
+const dataPath = ref('data/processed/element_forecasting/path.txt')
 const datasetInfo = ref('')
 const maxIndex = ref(0)
 const startIdx = ref(0)

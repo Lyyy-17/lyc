@@ -26,7 +26,7 @@ def inspect_anomaly(req: AnomalyInspectRequest):
     events_path = resolve_path(req.events_json.strip('"\''))
     manifest_path = resolve_path(req.manifest_path.strip('"\''))
     processed_input = req.processed_dir.strip('"\'')
-    if processed_input in {"", "data/processed/anomaly_detection"}:
+    if processed_input in {"", "data/processed/anomaly_detection", "data/processed/anomaly_detection/path.txt"}:
         processed_input = read_path_txt("data/processed/anomaly_detection/path.txt") or processed_input
     processed_dir = resolve_path(processed_input)
     norm_stats_path = resolve_path(req.norm_stats_path.strip('"\''))

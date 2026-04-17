@@ -7,7 +7,7 @@ import { getChartLayoutBase } from './plotly/chartLayout'
 let eddyProgressTimer: ReturnType<typeof setInterval> | null = null
 
 const eddyModelPath = ref('models/eddy_model.pt')
-const eddyDataPath = ref('data/processed/eddy_detection/19930101_20241231_clean.nc')
+const eddyDataPath = ref('data/processed/eddy_detection/path.txt')
 const eddyDatasetInfo = ref('')
 const eddyDates = ref([])
 const eddyDayIndex = ref(0)

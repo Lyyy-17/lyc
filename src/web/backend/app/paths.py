@@ -23,3 +23,17 @@ def read_path_txt(path_txt_rel: str) -> str:
             return str(f.read().strip())
     except Exception:
         return ""
+
+
+def resolve_data_path_or_path_txt(raw_path: str) -> str:
+    """Resolve data path; if input is a path.txt, read target path from it."""
+    s = str(raw_path or "").strip().strip('"\'')
+    if not s:
+        return resolve_path(s)
+
+    abs_input = resolve_path(s)
+    if s.endswith("path.txt") or abs_input.endswith("path.txt"):
+        target = read_path_txt(s)
+        if target:
+            return resolve_path(target)
+    return abs_input

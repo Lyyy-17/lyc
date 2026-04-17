@@ -14,7 +14,7 @@ from src.element_forecasting.dataset import ElementForecastWindowDataset
 from src.element_forecasting.predictor import ElementForecastPredictor
 
 from .. import state
-from ..paths import resolve_path, read_path_txt
+from ..paths import resolve_data_path_or_path_txt
 from ..schemas import DatasetInfoRequest, PredictRequest
 from ..services.element_mask import extract_mask
 
@@ -23,20 +23,17 @@ router = APIRouter(prefix="/api", tags=["element"])
 
 @router.get("/default-data-path")
 def get_default_data_path():
-    content = read_path_txt("data/processed/element_forecasting/path.txt")
-    if content:
-        return {"path": content}
-    return {"path": ""}
+    return {"path": "data/processed/element_forecasting/path.txt"}
 
 
 @router.post("/dataset-info")
 def get_dataset_info(req: DatasetInfoRequest):
-    data_path = resolve_path(req.data_path.strip('"\''))
+    data_path = resolve_data_path_or_path_txt(req.data_path)
     if not os.path.exists(data_path):
         raise HTTPException(status_code=404, detail=f"Data file not found: {data_path}")
 
     try:
-        norm_path = resolve_path("data/processed/normalization/element_forecasting_norm.json")
+        norm_path = resolve_data_path_or_path_txt("data/processed/normalization/element_forecasting_norm.json")
         dataset = ElementForecastWindowDataset(
             data_file=data_path,
             input_steps=24,
@@ -68,8 +65,8 @@ def get_dataset_info(req: DatasetInfoRequest):
 
 @router.post("/predict")
 def run_prediction(req: PredictRequest):
-    data_path = resolve_path(req.data_path.strip('"\''))
-    model_path = resolve_path(req.model_path.strip('"\''))
+    data_path = resolve_data_path_or_path_txt(req.data_path)
+    model_path = resolve_data_path_or_path_txt(req.model_path)
 
     if not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail=f"Model not found: {model_path}")
@@ -77,7 +74,7 @@ def run_prediction(req: PredictRequest):
         raise HTTPException(status_code=404, detail=f"Data file not found: {data_path}")
 
     try:
-        norm_path = resolve_path("data/processed/normalization/element_forecasting_norm.json")
+        norm_path = resolve_data_path_or_path_txt("data/processed/normalization/element_forecasting_norm.json")
         dataset = ElementForecastWindowDataset(
             data_file=data_path,
             input_steps=24,

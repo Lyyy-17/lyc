@@ -21,7 +21,7 @@ from utils.logger import get_logger
 
 from .. import eddy_core as ec
 from .. import state
-from ..paths import resolve_path
+from ..paths import resolve_data_path_or_path_txt, resolve_path
 from ..schemas import (
     EddyDatasetInfoRequest,
     EddyDateIndexRequest,
@@ -36,23 +36,21 @@ router = APIRouter(prefix="/api/eddy", tags=["eddy"])
 
 @router.get("/default-paths")
 def get_default_eddy_paths():
-    clean_path, _ = ec._default_eddy_paths()
     return {
         "model_path": ec._default_eddy_model_path(),
-        "data_path": clean_path,
+        "data_path": "data/processed/eddy_detection/path.txt",
     }
 
 
 @router.get("/default-data-path")
 def get_eddy_default_data_path():
-    clean_path, _ = ec._default_eddy_paths()
-    return {"path": clean_path}
+    return {"path": "data/processed/eddy_detection/path.txt"}
 
 
 @router.post("/dataset-info")
 def get_eddy_dataset_info(req: EddyDatasetInfoRequest):
     try:
-        data_path = resolve_path(str(req.data_path).strip().strip('"\''))
+        data_path = resolve_data_path_or_path_txt(req.data_path)
         if not os.path.exists(data_path):
             raise HTTPException(status_code=404, detail=f"Data file not found: {data_path}")
 
@@ -103,7 +101,7 @@ async def run_eddy_prediction_day(req: EddyPredictDayRequest):
     t0_total = perf_counter()
     try:
         model_path = resolve_path(req.model_path)
-        data_path = resolve_path(str(req.data_path).strip().strip('"\''))
+        data_path = resolve_data_path_or_path_txt(req.data_path)
         if not os.path.exists(model_path):
             raise HTTPException(status_code=404, detail=f"Model not found: {model_path}")
         if not os.path.exists(data_path):
@@ -202,7 +200,7 @@ async def run_eddy_prediction_day(req: EddyPredictDayRequest):
 @router.post("/date-index")
 def get_eddy_date_index(req: EddyDateIndexRequest):
     try:
-        data_path = resolve_path(str(req.data_path).strip().strip('"\''))
+        data_path = resolve_data_path_or_path_txt(req.data_path)
         if not os.path.exists(data_path):
             raise HTTPException(status_code=404, detail=f"Data file not found: {data_path}")
 
@@ -245,7 +243,7 @@ def get_eddy_date_index(req: EddyDateIndexRequest):
 async def run_eddy_prediction(req: EddyPredictRequest):
     try:
         model_path = resolve_path(req.model_path)
-        data_path = resolve_path(str(req.data_path).strip().strip('"\''))
+        data_path = resolve_data_path_or_path_txt(req.data_path)
         if not os.path.exists(model_path):
             raise HTTPException(status_code=404, detail=f"Model not found: {model_path}")
         if not os.path.exists(data_path):
