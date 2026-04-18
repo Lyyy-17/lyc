@@ -247,7 +247,7 @@
             <label class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Select Day</label>
             <select v-model.number="eddyDayIndex" class="tech-input">
               <option v-for="(d, idx) in eddyDates" :key="`${d}-${idx}`" :value="idx">
-                {{ d }} (idx={{ idx }})
+                {{ d }} | 序号 {{ idx }}
               </option>
             </select>
           </div>
@@ -267,7 +267,7 @@
           </div>
 
           <div v-if="eddyResult" class="p-3 rounded-lg border border-tech-cyan/20 bg-slate-900/50 text-xs font-mono text-slate-300">
-            <div>date: {{ eddyResult.day_label }} (idx={{ eddyResult.day_index }})</div>
+            <div>date: {{ eddyResult.day_label }} | 序号 {{ eddyResult.day_index }}</div>
             <div>cyclonic: {{ eddyResult.cyclonic_count }}</div>
             <div>anticyclonic: {{ eddyResult.anticyclonic_count }}</div>
             <button class="tech-btn ghost-btn w-full mt-3 flex items-center justify-center gap-2" @click="downloadEddyInfo">
@@ -280,7 +280,7 @@
           <div class="glass-panel p-4 h-[68%] min-h-[320px] flex flex-col">
             <div class="flex items-center gap-3 mb-3">
               <MapIcon class="w-5 h-5 text-tech-cyan" />
-              <h2 class="font-display text-lg tracking-widest text-white m-0">涡旋日预测图（ADT + 边界 + 中心）</h2>
+              <h2 class="font-display text-lg tracking-widest text-white m-0">涡旋日预测图</h2>
             </div>
 
             <div class="flex-1 relative min-h-0 bg-slate-900/25 rounded-lg border border-slate-700/60">
@@ -303,15 +303,15 @@
 
             <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div class="p-3 rounded-lg border border-cyan-400/30 bg-cyan-500/10">
-                <div class="text-[11px] font-mono text-slate-300">气旋涡旋 (Cyclonic)</div>
+                <div class="text-[11px] font-mono text-slate-300">气旋涡旋</div>
                 <div class="text-2xl font-mono text-cyan-300 mt-1">{{ Number(eddyResult?.cyclonic_count || 0) }}</div>
               </div>
               <div class="p-3 rounded-lg border border-rose-400/30 bg-rose-500/10">
-                <div class="text-[11px] font-mono text-slate-300">反气旋涡旋 (Anticyclonic)</div>
+                <div class="text-[11px] font-mono text-slate-300">反气旋涡旋</div>
                 <div class="text-2xl font-mono text-rose-300 mt-1">{{ Number(eddyResult?.anticyclonic_count || 0) }}</div>
               </div>
               <div class="p-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10">
-                <div class="text-[11px] font-mono text-slate-300">总数 (Total)</div>
+                <div class="text-[11px] font-mono text-slate-300">总数</div>
                 <div class="text-2xl font-mono text-emerald-300 mt-1">{{ Number(eddyResult?.cyclonic_count || 0) + Number(eddyResult?.anticyclonic_count || 0) }}</div>
               </div>
             </div>
@@ -425,62 +425,63 @@
               >4. 分级预警发布</button>
             </div>
 
-            <div v-if="anomalyView === 'monitor'" class="flex-1 overflow-auto custom-scrollbar space-y-3">
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+            <div v-if="anomalyView === 'monitor'" class="flex-1 overflow-auto custom-scrollbar space-y-2">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div class="p-2 rounded-lg border border-slate-700 bg-slate-900/50">
                   <div class="text-[10px] text-slate-400 font-mono">实时风速估计</div>
-                  <div class="text-xl text-white font-mono mt-1">{{ anomalyMonitor.windNow }} m/s</div>
-                  <div class="text-[11px] text-slate-400 font-mono mt-1">基准区间 {{ anomalyMonitor.windBand }}</div>
+                  <div class="text-lg text-white font-mono mt-0.5">{{ anomalyMonitor.windNow }} m/s</div>
+                  <div class="text-[10px] text-slate-400 font-mono mt-0.5">基准 {{ anomalyMonitor.windBand }}</div>
                 </div>
-                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                <div class="p-2 rounded-lg border border-slate-700 bg-slate-900/50">
                   <div class="text-[10px] text-slate-400 font-mono">实时波高估计</div>
-                  <div class="text-xl text-white font-mono mt-1">{{ anomalyMonitor.waveNow }} m</div>
-                  <div class="text-[11px] text-slate-400 font-mono mt-1">基准区间 {{ anomalyMonitor.waveBand }}</div>
+                  <div class="text-lg text-white font-mono mt-0.5">{{ anomalyMonitor.waveNow }} m</div>
+                  <div class="text-[10px] text-slate-400 font-mono mt-0.5">基准 {{ anomalyMonitor.waveBand }}</div>
                 </div>
-                <div class="p-3 rounded-lg border border-slate-700 bg-slate-900/50">
+                <div class="p-2 rounded-lg border border-slate-700 bg-slate-900/50">
                   <div class="text-[10px] text-slate-400 font-mono">24H 监测状态</div>
-                  <div class="text-xl font-mono mt-1" :class="anomalyRiskClass">{{ anomalyMonitor.status }}</div>
-                  <div class="text-[11px] text-slate-400 font-mono mt-1">终点时间 {{ anomalyLatestTimeText }}</div>
+                  <div class="text-lg font-mono mt-0.5" :class="anomalyRiskClass">{{ anomalyMonitor.status }}</div>
+                  <div class="text-[10px] text-slate-400 font-mono mt-0.5">终点 {{ anomalyLatestTimeText }}</div>
                 </div>
-              </div>
-
-              <div class="glass-panel p-3 border border-slate-700/60">
-                <div class="text-xs font-mono text-slate-300 mb-2">风浪实况 vs 正常基准</div>
-                <div id="anomaly-monitor-chart" class="h-[240px]"></div>
-              </div>
-
-              <div class="glass-panel p-3 border border-slate-700/60">
-                <div class="text-xs font-mono text-slate-300 mb-2">最近24小时滑动窗口（点击点位切换精细图）</div>
-                <div id="anomaly-window-chart" class="h-[210px]"></div>
-                <div class="text-[11px] text-slate-400 font-mono mt-2">选中样本 index={{ anomalySelectedIndexText }} | time={{ anomalySelectedTimeText }}</div>
               </div>
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div class="glass-panel p-3 border border-slate-700/60">
-                  <div class="text-xs font-mono text-slate-300 mb-2">风速实况精细图（海域轮廓）</div>
+                  <div class="text-xs font-mono text-slate-300 mb-2">风速实况精细图</div>
                   <div class="relative">
                     <div v-if="anomalySnapshotLoading" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-tech-cyan bg-slate-950/45">精细图加载中...</div>
                     <div v-else-if="anomalySnapshotError" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-rose-300 bg-slate-950/45 px-3 text-center">{{ anomalySnapshotError }}</div>
                     <div v-else-if="!anomalySnapshot" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-slate-400 bg-slate-950/45">请选择时间点加载精细图</div>
-                    <div id="anomaly-wind-map" class="h-[260px]" :class="anomalySnapshotLoading ? 'opacity-25' : 'opacity-100'"></div>
+                    <div id="anomaly-wind-map" class="h-[210px]" :class="anomalySnapshotLoading ? 'opacity-25' : 'opacity-100'"></div>
                   </div>
                 </div>
                 <div class="glass-panel p-3 border border-slate-700/60">
-                  <div class="text-xs font-mono text-slate-300 mb-2">波高实况精细图（海域轮廓）</div>
+                  <div class="text-xs font-mono text-slate-300 mb-2">波高实况精细图</div>
                   <div class="relative">
                     <div v-if="anomalySnapshotLoading" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-tech-cyan bg-slate-950/45">精细图加载中...</div>
                     <div v-else-if="anomalySnapshotError" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-rose-300 bg-slate-950/45 px-3 text-center">{{ anomalySnapshotError }}</div>
                     <div v-else-if="!anomalySnapshot" class="absolute inset-0 z-10 flex items-center justify-center text-xs font-mono text-slate-400 bg-slate-950/45">请选择时间点加载精细图</div>
-                    <div id="anomaly-wave-map" class="h-[260px]" :class="anomalySnapshotLoading ? 'opacity-25' : 'opacity-100'"></div>
+                    <div id="anomaly-wave-map" class="h-[210px]" :class="anomalySnapshotLoading ? 'opacity-25' : 'opacity-100'"></div>
                   </div>
                 </div>
+              </div>
+
+              <div class="glass-panel p-2.5 border border-slate-700/60">
+                <div class="text-[11px] font-mono text-slate-300 mb-1">24小时节点选择</div>
+                <div class="text-[10px] text-slate-500 font-mono mb-1.5">点击节点切换下方精细图</div>
+                <div id="anomaly-window-chart" class="h-[96px]"></div>
+                <div class="text-[10px] text-slate-400 font-mono mt-1.5">样本 {{ anomalySelectedIndexText }} | 时间 {{ anomalySelectedTimeText }}</div>
+              </div>
+
+              <div class="glass-panel p-2.5 border border-slate-700/60">
+                <div class="text-[11px] font-mono text-slate-300 mb-1">风浪实况与基准对比</div>
+                <div id="anomaly-monitor-chart" class="h-[110px]"></div>
               </div>
             </div>
 
             <div v-else-if="anomalyView === 'detect'" class="flex-1 overflow-auto custom-scrollbar space-y-2">
               <div class="glass-panel p-2.5 border border-slate-700/60">
                 <div class="flex items-center justify-between gap-2 mb-1.5">
-                  <div class="text-[11px] font-mono text-slate-300">异常事件时序曲线（幅度与持续时长）</div>
+                  <div class="text-[11px] font-mono text-slate-300">异常事件时序曲线</div>
                   <div class="text-[11px] font-mono text-tech-cyan">{{ anomalyTracebackRangeText }}</div>
                 </div>
                 <div id="anomaly-timeline-chart" class="h-[180px]"></div>
@@ -509,27 +510,27 @@
                 <table class="w-full text-xs font-mono">
                   <thead class="sticky top-0 bg-slate-900/90 text-slate-300">
                     <tr>
-                      <th class="text-left p-2 border-b border-slate-700">index</th>
-                      <th class="text-left p-2 border-b border-slate-700">time</th>
+                      <th class="text-left p-2 border-b border-slate-700">样本</th>
+                      <th class="text-left p-2 border-b border-slate-700">时间</th>
                       <th class="text-left p-2 border-b border-slate-700">异常幅度</th>
                       <th class="text-left p-2 border-b border-slate-700">真实风速均值</th>
                       <th class="text-left p-2 border-b border-slate-700">真实波高均值</th>
-                      <th class="text-left p-2 border-b border-slate-700">label</th>
+                      <th class="text-left p-2 border-b border-slate-700">标签</th>
                       <th class="text-left p-2 border-b border-slate-700">影响范围</th>
-                      <th class="text-left p-2 border-b border-slate-700">持续时长(h)</th>
-                      <th class="text-left p-2 border-b border-slate-700">event_hits</th>
+                      <th class="text-left p-2 border-b border-slate-700">持续时长</th>
+                      <th class="text-left p-2 border-b border-slate-700">事件命中</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="row in anomalyTracebackRows" :key="`${row.index}-${row.timestamp}`" class="odd:bg-slate-900/20 even:bg-slate-800/20">
                       <td class="p-2 border-b border-slate-800">{{ row.index }}</td>
                       <td class="p-2 border-b border-slate-800">{{ row.time }}</td>
-                      <td class="p-2 border-b border-slate-800" :class="row.amplitude >= 2.4 ? 'text-rose-300' : 'text-amber-300'">{{ row.amplitude.toFixed(2) }}x</td>
+                      <td class="p-2 border-b border-slate-800" :class="row.amplitude >= 2.4 ? 'text-rose-300' : 'text-amber-300'">{{ row.amplitude.toFixed(2) }} 倍</td>
                       <td class="p-2 border-b border-slate-800 text-cyan-200">{{ Number.isFinite(row.windMean) ? row.windMean.toFixed(3) : '-' }}</td>
                       <td class="p-2 border-b border-slate-800 text-cyan-100">{{ Number.isFinite(row.waveMean) ? row.waveMean.toFixed(3) : '-' }}</td>
                       <td class="p-2 border-b border-slate-800" :class="row.labelSignal === 1 ? 'text-rose-300' : 'text-slate-400'">{{ row.labelSignal }}</td>
                       <td class="p-2 border-b border-slate-800">{{ row.scope }}</td>
-                      <td class="p-2 border-b border-slate-800">{{ row.duration }}</td>
+                      <td class="p-2 border-b border-slate-800">{{ row.duration }} 小时</td>
                       <td class="p-2 border-b border-slate-800">{{ row.eventHits }}</td>
                     </tr>
                   </tbody>
@@ -539,7 +540,7 @@
 
             <div v-else-if="anomalyView === 'typhoon'" class="flex-1 overflow-auto custom-scrollbar space-y-3">
               <div class="glass-panel p-3 border border-slate-700/60">
-                <div class="text-xs font-mono text-slate-300 mb-2">风险区域空间分布（低/中/高/极高）</div>
+                <div class="text-xs font-mono text-slate-300 mb-2">风险区域空间分布</div>
                 <div id="anomaly-riskmap-chart" class="h-[240px]"></div>
               </div>
 
@@ -567,7 +568,7 @@
 
             <div v-else class="flex-1 overflow-auto custom-scrollbar space-y-3">
               <div class="p-3 rounded-lg border" :class="anomalyRiskClass">
-                <div class="text-sm font-mono">当前{{ anomalyWarning.level }}色预警（风险分 {{ anomalyRiskScore }}）</div>
+                <div class="text-sm font-mono">当前{{ anomalyWarning.level }}色预警 | 风险分 {{ anomalyRiskScore }}</div>
                 <div class="text-xs font-mono mt-1 opacity-90">数据时效：{{ anomalyDataTimeText }}</div>
                 <div class="text-xs font-mono mt-1 opacity-90">发布时间：{{ anomalyIssueTimeText }}</div>
                 <div class="text-xs font-mono mt-1 opacity-90">推送对象：{{ anomalyWarning.targets }}</div>
@@ -617,7 +618,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, markRaw, computed } from 'vue'
 import axios from 'axios'
-import Plotly from 'plotly.js-dist-min'
 import { 
   Activity, Terminal, Cpu, Database, Search, CheckCircle2, 
   Zap, AlertTriangle, Map as MapIcon, Play, Pause, LineChart, Lock, Download,
@@ -664,6 +664,38 @@ const colorRangeCache = new Map()
 const API_BASE = '/api'
 const currentTime = ref(new Date().toISOString().substring(11, 19))
 const STEP_HOURS = 1
+
+let plotlyModulePromise = null
+const ensurePlotly = () => {
+  if (!plotlyModulePromise) {
+    plotlyModulePromise = import('plotly.js-dist-min').then((mod) => mod.default || mod)
+  }
+  return plotlyModulePromise
+}
+
+const plotlyResize = (target) => {
+  return ensurePlotly()
+    .then((plotly) => plotly?.Plots?.resize?.(target))
+    .catch(() => {})
+}
+
+const plotlyReact = (container, data, layout, config) => {
+  return ensurePlotly()
+    .then((plotly) => plotly?.react?.(container, data, layout, config))
+    .catch(() => {})
+}
+
+const plotlyPurge = (container) => {
+  return ensurePlotly()
+    .then((plotly) => plotly?.purge?.(container))
+    .catch(() => {})
+}
+
+const plotlyRelayout = (container, layout) => {
+  return ensurePlotly()
+    .then((plotly) => plotly?.relayout?.(container, layout))
+    .catch(() => {})
+}
 
 const anomalyLabelsPath = ref('outputs/anomaly_detection/labels_competition.json')
 const anomalyEventsPath = ref('outputs/anomaly_detection/events_competition.json')
@@ -717,6 +749,7 @@ let clockInterval
 let anomalySnapshotRequestSeq = 0
 let anomalySnapshotPrefetchToken = 0
 const anomalySnapshotLocalCache = new Map()
+const anomalySnapshotInflight = new Map()
 
 const ANOMALY_LOOKBACK_HOURS = 168
 const ANOMALY_MONITOR_WINDOW_HOURS = 24
@@ -832,16 +865,16 @@ const getModuleLabel = (moduleKey) => {
 
 const handleResize = () => {
   if (activeModule.value === 'forecast' && hasResult.value) {
-    Plotly.Plots.resize('spatial-chart')
-    Plotly.Plots.resize('curve-chart')
+    plotlyResize('spatial-chart')
+    plotlyResize('curve-chart')
   }
   if (activeModule.value === 'eddy' && eddyResult.value) {
-    Plotly.Plots.resize('eddy-chart')
+    plotlyResize('eddy-chart')
   }
   if (activeModule.value === 'anomaly' && anomalyData.value) {
     ;['anomaly-monitor-chart', 'anomaly-window-chart', 'anomaly-timeline-chart', 'anomaly-riskmap-chart', 'anomaly-wind-map', 'anomaly-wave-map'].forEach((id) => {
       const el = document.getElementById(id)
-      if (el) Plotly.Plots.resize(el)
+      if (el) plotlyResize(el)
     })
   }
 }
@@ -1003,6 +1036,33 @@ const _formatEpochText = (ts) => {
   return new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 19)
 }
 
+const _requestAnomalySnapshot = async (snapshotIndex, timeoutMs = 30000) => {
+  const idx = Number(snapshotIndex)
+  if (!Number.isFinite(idx) || idx < 0) return null
+  if (anomalySnapshotInflight.has(idx)) {
+    return anomalySnapshotInflight.get(idx)
+  }
+  const req = axios.post(`${API_BASE}/anomaly/inspect`, {
+    labels_json: anomalyLabelsPath.value,
+    events_json: anomalyEventsPath.value,
+    manifest_path: anomalyManifestPath.value,
+    split: anomalySplit.value,
+    recent_window_hours: 24,
+    snapshot_only: true,
+    max_points: 1,
+    include_snapshot: true,
+    snapshot_index: idx
+  }, {
+    timeout: timeoutMs
+  }).then((res) => res.data?.snapshot || null)
+    .finally(() => {
+      anomalySnapshotInflight.delete(idx)
+    })
+
+  anomalySnapshotInflight.set(idx, req)
+  return req
+}
+
 const _buildRecentWindow = (payload) => {
   const source = Array.isArray(payload?.recent_window) ? payload.recent_window : []
   if (!source.length) {
@@ -1122,8 +1182,9 @@ const selectAnomalyWindowPoint = (sampleIndex, withSnapshot = true) => {
 
 const fetchAnomalySnapshot = async (snapshotIndex) => {
   if (!Number.isFinite(Number(snapshotIndex)) || Number(snapshotIndex) < 0) return
+  const idx = Number(snapshotIndex)
 
-  const cached = anomalySnapshotLocalCache.get(Number(snapshotIndex))
+  const cached = anomalySnapshotLocalCache.get(idx)
   if (cached) {
     anomalySnapshot.value = cached
     anomalySnapshotError.value = ''
@@ -1138,32 +1199,24 @@ const fetchAnomalySnapshot = async (snapshotIndex) => {
   const reqSeq = ++anomalySnapshotRequestSeq
   anomalySnapshotLoading.value = true
   anomalySnapshotError.value = ''
+  const prevSnapshot = anomalySnapshot.value
 
   try {
-    const res = await axios.post(`${API_BASE}/anomaly/inspect`, {
-      labels_json: anomalyLabelsPath.value,
-      events_json: anomalyEventsPath.value,
-      manifest_path: anomalyManifestPath.value,
-      split: anomalySplit.value,
-      recent_window_hours: 24,
-      snapshot_only: true,
-      max_points: 1,
-      include_snapshot: true,
-      snapshot_index: Number(snapshotIndex)
-    }, {
-      timeout: 30000
-    })
-    if (reqSeq !== anomalySnapshotRequestSeq) return
-    anomalySnapshot.value = res.data?.snapshot || null
-    if (anomalySnapshot.value) {
-      anomalySnapshotLocalCache.set(Number(snapshotIndex), anomalySnapshot.value)
+    let snap = await _requestAnomalySnapshot(idx, 30000)
+    // Cold-start I/O occasionally causes the first foreground request to miss/timeout.
+    if (!snap) {
+      snap = await _requestAnomalySnapshot(idx, 45000)
     }
-    if (!anomalySnapshot.value) {
+    if (reqSeq !== anomalySnapshotRequestSeq) return
+    anomalySnapshot.value = snap
+    if (snap) {
+      anomalySnapshotLocalCache.set(idx, snap)
+    } else {
       anomalySnapshotError.value = '该时间点未返回精细图数据'
     }
   } catch (err) {
     if (reqSeq !== anomalySnapshotRequestSeq) return
-    anomalySnapshot.value = null
+    anomalySnapshot.value = prevSnapshot || null
     const msg = err?.code === 'ECONNABORTED'
       ? '精细图加载超时（30s），请重试或切换其他时间点'
       : `精细图加载失败: ${err.response?.data?.detail || err.message}`
@@ -1187,20 +1240,7 @@ const prefetchAnomalySnapshots = async (indices) => {
     if (!Number.isFinite(idx) || idx < 0) continue
     if (anomalySnapshotLocalCache.has(idx)) continue
     try {
-      const res = await axios.post(`${API_BASE}/anomaly/inspect`, {
-        labels_json: anomalyLabelsPath.value,
-        events_json: anomalyEventsPath.value,
-        manifest_path: anomalyManifestPath.value,
-        split: anomalySplit.value,
-        recent_window_hours: 24,
-        snapshot_only: true,
-        max_points: 1,
-        include_snapshot: true,
-        snapshot_index: idx
-      }, {
-        timeout: 25000
-      })
-      const snap = res.data?.snapshot || null
+      const snap = await _requestAnomalySnapshot(idx, 25000)
       if (snap) {
         anomalySnapshotLocalCache.set(idx, snap)
       }
@@ -2036,7 +2076,7 @@ const renderSpatialPlot = (stepData, containerId = 'spatial-chart') => {
     layout[`yaxis${ax}`] = { domain: [0.25, 0.90], anchor: `x${ax}`, autorange: 'reversed', showticklabels: true, tickfont: { color: '#475569', size: 9 }, gridcolor: 'rgba(30, 41, 59, 0.5)', zeroline: false }
   }
 
-  Plotly.react(container, plots, layout, { responsive: true, displayModeBar: false })
+  plotlyReact(container, plots, layout, { responsive: true, displayModeBar: false })
 }
 
 const _findField2D = (items, fieldName) => {
@@ -2156,7 +2196,7 @@ const renderEddyPlot = (payload) => {
     showlegend: false
   }
 
-  Plotly.react(container, traces, layout, { responsive: true, displayModeBar: false })
+  plotlyReact(container, traces, layout, { responsive: true, displayModeBar: false })
 }
 
 const renderCurvePlot = (curveData, containerId = 'curve-chart') => {
@@ -2206,7 +2246,7 @@ const renderCurvePlot = (curveData, containerId = 'curve-chart') => {
     layout[`yaxis${ax}`] = { gridcolor: 'rgba(30, 41, 59, 0.5)', tickfont: { color: '#64748b' } }
   }
 
-  Plotly.react(container, plots, layout, { responsive: true, displayModeBar: false })
+  plotlyReact(container, plots, layout, { responsive: true, displayModeBar: false })
 }
 
 const renderAnomalyMonitorChart = () => {
@@ -2233,23 +2273,34 @@ const renderAnomalyMonitorChart = () => {
   ]
 
   const layout = {
-    ...getChartLayoutBase('监测要素与基准阈值对比'),
+    ...getChartLayoutBase(''),
+    title: undefined,
     barmode: 'group',
-    margin: { l: 50, r: 20, t: 42, b: 40 },
-    xaxis: { tickfont: { color: '#94a3b8' } },
-    yaxis: { gridcolor: 'rgba(30,41,59,0.5)', tickfont: { color: '#94a3b8' } },
-    legend: { orientation: 'h', x: 0, y: 1.12, font: { color: '#94a3b8', size: 10 } }
+    margin: { l: 40, r: 12, t: 8, b: 28 },
+    xaxis: { tickfont: { color: '#94a3b8', size: 10 } },
+    yaxis: { gridcolor: 'rgba(30,41,59,0.5)', tickfont: { color: '#94a3b8', size: 10 } },
+    legend: {
+      orientation: 'h',
+      x: 1,
+      xanchor: 'right',
+      y: 1.02,
+      yanchor: 'bottom',
+      bgcolor: 'rgba(2,6,23,0.35)',
+      bordercolor: 'rgba(30,41,59,0.6)',
+      borderwidth: 1,
+      font: { color: '#94a3b8', size: 10 }
+    }
   }
 
-  Plotly.react(container, traces, layout, { responsive: true, displayModeBar: false })
+  plotlyReact(container, traces, layout, { responsive: true, displayModeBar: false })
 }
 
-const renderAnomalyWindowChart = () => {
+const renderAnomalyWindowChart = async () => {
   const container = document.getElementById('anomaly-window-chart')
   const points = anomalyRecentWindow.value
   if (!container) return
   if (!points.length) {
-    Plotly.purge(container)
+    await plotlyPurge(container)
     return
   }
 
@@ -2261,7 +2312,7 @@ const renderAnomalyWindowChart = () => {
   })
   const markerSize = points.map((p) => (p.index === anomalySelectedSnapshotIndex.value ? 11 : 8))
 
-  Plotly.react(container, [
+  await plotlyReact(container, [
     {
       x,
       y,
@@ -2274,8 +2325,9 @@ const renderAnomalyWindowChart = () => {
       hovertemplate: 'index=%{customdata[0]}<br>time=%{customdata[1]}<br>label=%{y}<br>events=%{customdata[2]}<extra></extra>'
     }
   ], {
-    ...getChartLayoutBase('最近24小时滑动窗口'),
-    margin: { l: 45, r: 20, t: 40, b: 40 },
+    ...getChartLayoutBase(''),
+    title: undefined,
+    margin: { l: 36, r: 12, t: 8, b: 22 },
     xaxis: { tickfont: { color: '#94a3b8', size: 9 }, showgrid: false },
     yaxis: { title: 'label', range: [-0.15, 1.15], dtick: 1, gridcolor: 'rgba(30,41,59,0.5)', tickfont: { color: '#94a3b8' } },
     showlegend: false
@@ -2283,6 +2335,9 @@ const renderAnomalyWindowChart = () => {
 
   if (typeof container.removeAllListeners === 'function') {
     container.removeAllListeners('plotly_click')
+  }
+  if (typeof container.on !== 'function') {
+    return
   }
   container.on('plotly_click', (ev) => {
     const pointNumber = ev?.points?.[0]?.pointNumber
@@ -2341,8 +2396,8 @@ const renderAnomalyOceanMaps = () => {
   const waveEl = document.getElementById('anomaly-wave-map')
   if (!windEl || !waveEl) return
   if (!snap) {
-    Plotly.purge(windEl)
-    Plotly.purge(waveEl)
+    plotlyPurge(windEl)
+    plotlyPurge(waveEl)
     return
   }
 
@@ -2354,7 +2409,7 @@ const renderAnomalyOceanMaps = () => {
   const windRange = _quantileRange(windMasked, 0.02, 0.98)
   const waveRange = _quantileRange(waveMasked, 0.02, 0.98)
 
-  Plotly.react(windEl, [
+  plotlyReact(windEl, [
     {
       z: windMasked,
       type: 'heatmap',
@@ -2395,7 +2450,7 @@ const renderAnomalyOceanMaps = () => {
     showlegend: false
   }, { responsive: true, displayModeBar: false })
 
-  Plotly.react(waveEl, [
+  plotlyReact(waveEl, [
     {
       z: waveMasked,
       type: 'heatmap',
@@ -2442,7 +2497,7 @@ const renderAnomalyTimelineChart = () => {
   if (!container) return
 
   if (!anomalyTracebackRows.value.length) {
-    Plotly.react(container, [], {
+    plotlyReact(container, [], {
       ...getChartLayoutBase('异常事件幅度与持续时长'),
       margin: { l: 40, r: 20, t: 42, b: 40 },
       annotations: [
@@ -2523,7 +2578,7 @@ const renderAnomalyTimelineChart = () => {
     legend: { orientation: 'h', x: 0, y: 1.12, font: { color: '#94a3b8', size: 10 } }
   }
 
-  Plotly.react(container, traces, layout, { responsive: true, displayModeBar: false })
+  plotlyReact(container, traces, layout, { responsive: true, displayModeBar: false })
 }
 
 const renderAnomalyRiskMapChart = () => {
@@ -2722,7 +2777,7 @@ const renderAnomalyRiskMapChart = () => {
     ]
   }
 
-  Plotly.react(container, [trace], layout, { responsive: true, displayModeBar: false })
+  plotlyReact(container, [trace], layout, { responsive: true, displayModeBar: false })
 }
 
 const copyAnomalyBrief = async () => {
@@ -2749,7 +2804,7 @@ const updateVerticalLineOnCurve = (containerId = 'curve-chart', axisCount = 4, s
     })
   }
 
-  Plotly.relayout(container, { shapes })
+  plotlyRelayout(container, { shapes })
 }
 </script>
 
