@@ -7,7 +7,7 @@
 ```text
 src/web/
 ├── frontend/       # 前端工程 (Vue 3 + Vite + Tailwind CSS v4)
-├── backend/        # 后端 API 服务 (Python + FastAPI)
+├── backend/app/    # 后端 FastAPI：`main.py` 装配路由；`routers/` 按任务拆分；`eddy_core.py` 等为涡旋辅助逻辑
 └── README.md       # 本说明说明
 ```
 
@@ -60,6 +60,19 @@ FastAPI 后端已接入，负责承接前端请求并串联涡旋、要素与异
 python -m uvicorn src.web.backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
+如本机命令是 `python3`，可使用：
+
+```bash
+python3 -m uvicorn src.web.backend.app.main:app --host 0.0.0.0 --port 8000
+```
+
+> 当前后端以 ASGI 方式运行，推荐使用上述 `uvicorn ...:app` 命令；不再建议使用 `python main.py` 直接启动。
+
+启动后可快速检查：
+
+* 健康检查: `http://127.0.0.1:8000/healthz`
+* OpenAPI 文档: `http://127.0.0.1:8000/docs`
+
 ### 通信接口
 
 默认暴露于 `http://127.0.0.1:8000/api`，前端开发服务器通过 Vite 代理转发 `/api` 请求。
@@ -85,4 +98,4 @@ python -m uvicorn src.web.backend.app.main:app --host 0.0.0.0 --port 8000
 ## 🔗 协作说明 (AGENTS.md 遵循)
 
 前端在进行任何渲染工作时，严格遵循主仓库中的 `src/utils/visualization_defaults.py` 色彩方案及 DPI 视觉指导（例如 `Turbo`, `Viridis`, `Cividis` 等严格物理学科用配色调色板已内嵌于 Vue 代码中做双重对齐）。
-对于向前端发送产物，主模型应统一回写于 `outputs/final_results/` 或系统缓存映射以供该 Web 模块后端进行序列化分发。
+对于向前端发送产物，主模型应统一回写于 `outputs/<任务>/` 下约定路径或系统缓存映射以供该 Web 模块后端进行序列化分发。

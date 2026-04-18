@@ -13,7 +13,7 @@
 | 核心变量 | `adt`（动力高度）、`ugos`（纬向流）、`vgos`（经向流） |
 | 数据量 | 5 个文件（1993–2002、2003–2012、2013–2022、2023、2024） |
 | 划分 | train 4 个、val 1 个 |
-| 预处理 | 已由 `scripts/02_preprocess.py` 完成，产出 `*_clean.nc`、`eddy_norm.json` |
+| 预处理 | 由 `scripts/02_preprocess_eddy.py` 完成，产出 `*_clean.nc`、标签 `labels/*_label_meta4_mask_bg0.nc`（META4，`02c`+`02h`）、`eddy_norm.json` |
 
 ---
 
@@ -21,13 +21,11 @@
 
 ### 难点 1：对象级标签到像素级训练标签
 
-当前项目先按 META4 方法生成**对象级标签**，再转换为**像素级 mask** 供 U-Net 训练使用。这样既保留了轮廓、中心、极性等对象属性，又能直接进入分割网络。
+默认管线用 **META4 风格像素标签**（py-eddy-tracker 闭合轮廓检测），供 U-Net 直接读取 `eddy_mask`。
 
-**应对：对象级标签 + mask 转换 + 背景清零**
+**一键预处理**：`scripts/02_preprocess_eddy.py` 对每个 `*_clean.nc` 依次调用 `02c_generate_meta4_labels.py` 与 `02h_fix_meta4_mask_background.py`，得到 `*_label_meta4_mask_bg0.nc`。
 
-- 用 `02c_generate_meta4_labels.py` 生成 META4 对象级标签；
-- 用 `02h_fix_meta4_mask_background.py` 将背景显式修正为 `0`；
-- 用 `02j_objects_to_mask_parallel.py` 将对象级结果转成训练用像素级 mask。
+**可选**：若从 **对象级** NetCDF 出发，可用 `02e`/`02f` + `02h_objects_to_pixel_mask.py` / `02j_*.py` 再栅格化（与一键像素 META4 二选一或用于对比实验）。
 
 ### 难点 2：时序 vs 逐帧
 
@@ -42,11 +40,11 @@
         │
         ▼
 ┌────────────────────────────┐
-│  1. META4 对象级标签生成    │  轮廓、中心、极性、振幅等
+│  1. META4 像素标签（02c）   │  py-eddy-tracker，输出 eddy_mask 等
 └───────────┬────────────────┘
             ▼
 ┌────────────────────────────┐
-│  2. mask 化与背景清零       │  生成 0/1/2 像素级标签
+│  2. 背景清零（02h）         │  NaN→0，得到 0/1/2 像素级标签
 └───────────┬────────────────┘
             ▼
 ┌────────────────────────────┐
@@ -68,14 +66,10 @@
 
 ### 4.1 标签生成
 
-当前主线不是 OW 伪标签，而是 **META4 对象级标签**：
+主线为 **META4 像素级标签**（`02c` + `02h`），仓库已删除 **OW（Okubo–Weiss）伪标签**实现。
 
-- 在 ADT/SSH 场上搜索闭合轮廓；
-- 依据形状误差、振幅、像素数、极性等规则筛选对象；
-- 以对象级形式记录中心、半径、轮廓点和类别；
-- 再将对象级结果转换为像素级 mask，作为 U-Net 监督信号。
-
-OW / SSH 闭合等高线仍可作为未来对比基线或辅助验证方法。
+- `02c`：在 ADT 场上做闭合轮廓检测，写出像素 `eddy_mask`（及实例 id 等）；
+- `02h`：将背景 NaN 置 0，得到训练用 `*_label_meta4_mask_bg0.nc`。
 
 ### 4.2 样本与输入
 
@@ -129,8 +123,7 @@ OW / SSH 闭合等高线仍可作为未来对比基线或辅助验证方法。
 ```
 src/eddy_detection/
 ├── README.md           # 本文档
-├── dataset.py          # 已有，待扩展
-├── labeler.py          # META4 对象级标签生成
+├── dataset.py          # Dataset（manifest / merged_time）
 ├── model.py            # U-Net 等
 ├── trainer.py          # 训练循环
 ├── predictor.py        # 推理 + 后处理
@@ -138,8 +131,9 @@ src/eddy_detection/
 └── postprocess.py      # 连通域、中心、类型判定
 
 scripts/
-├── 02c_generate_meta4_labels.py  # 生成 META4 风格像素标签
-├── 02h_fix_meta4_mask_background.py  # 修复背景 NaN，导出 0/1/2 标签
+├── 02_preprocess_eddy.py         # clean + META4（02c+02h）+ split + stats
+├── 02c_generate_meta4_labels.py  # META4 像素标签（单文件）
+├── 02h_fix_meta4_mask_background.py  # 背景 NaN→0
 └── 03_train_eddy.py              # 训练入口
 ```
 
@@ -149,7 +143,7 @@ scripts/
 
 - **主要指标**：准确率 ≥75%；
 - **建议监控**：IoU、Precision、Recall、F1、混淆矩阵；
-- **对比基线**：纯 OW 法 vs OW 伪标签 + DL，验证 DL 收益。
+- **对比基线**：可与传统检测/其它标签管线对比，验证深度学习收益。
 
 ---
 

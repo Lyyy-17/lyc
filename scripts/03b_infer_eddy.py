@@ -66,7 +66,7 @@ def main() -> None:
     ap.add_argument(
         "--out-dir",
         type=Path,
-        default=ROOT / "outputs/final_results/eddy_detection",
+        default=ROOT / "outputs/eddy_detection",
     )
     ap.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()

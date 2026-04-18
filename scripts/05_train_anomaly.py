@@ -42,6 +42,32 @@ def _resolve_path(path_like: str | Path | None, *, default: Path) -> Path:
 	return p if p.is_absolute() else (ROOT / p)
 
 
+def _read_path_txt(path_txt_rel: str) -> str:
+	path_txt = ROOT / path_txt_rel
+	if not path_txt.is_file():
+		return ""
+	try:
+		return path_txt.read_text(encoding="utf-8").strip()
+	except Exception:
+		return ""
+
+
+def _resolve_anomaly_processed_dir(
+	raw_value: str | Path | None,
+	*,
+	default_rel: str,
+	default_path: Path,
+) -> Path:
+	default_rel_posix = default_rel.replace("\\", "/")
+	raw_text = "" if raw_value is None else str(raw_value).strip()
+	use_path_txt = raw_text in {"", default_rel, default_rel_posix}
+	if use_path_txt:
+		path_txt_value = _read_path_txt("data/processed/anomaly_detection/path.txt")
+		if path_txt_value:
+			return _resolve_path(path_txt_value, default=default_path)
+	return _resolve_path(raw_value, default=default_path)
+
+
 def _resolve_device(v: str) -> str:
 	if v == "auto":
 		return "cuda" if torch.cuda.is_available() else "cpu"
@@ -236,9 +262,11 @@ def main() -> None:
 	model_cfg = _load_yaml(_resolve_path(args.model_config, default=default_model_cfg))
 	train_cfg = _load_yaml(_resolve_path(args.train_config, default=default_train_cfg))
 
-	processed_dir = _resolve_path(
+	default_processed_rel = "data/processed/anomaly_detection"
+	processed_dir = _resolve_anomaly_processed_dir(
 		args.processed_dir or train_cfg.get("processed_dir") or data_cfg.get("paths", {}).get("processed", {}).get("anomaly"),
-		default=ROOT / "data/processed/anomaly_detection",
+		default_rel=default_processed_rel,
+		default_path=ROOT / default_processed_rel,
 	)
 	manifest = _resolve_path(
 		args.manifest or train_cfg.get("manifest_path") or data_cfg.get("artifacts", {}).get("split_manifests", {}).get("anomaly_detection"),
@@ -487,7 +515,7 @@ def main() -> None:
 		encoding="utf-8",
 	)
 
-	final_dir = ROOT / "outputs/final_results/anomaly_detection"
+	final_dir = ROOT / "outputs/anomaly_detection"
 	final_dir.mkdir(parents=True, exist_ok=True)
 	final_name = "anomaly_baseline_summary.json" if args.baseline else "anomaly_summary.json"
 	(final_dir / final_name).write_text(

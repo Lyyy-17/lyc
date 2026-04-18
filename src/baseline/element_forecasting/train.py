@@ -116,7 +116,7 @@ def main() -> None:
     val_ds = ElementForecastSequenceDataset(split="val", **man_kw)
     if len(train_ds) == 0:
         raise SystemExit(
-            "train dataset empty: run scripts/02_preprocess.py with split/stats, "
+            "train dataset empty: run scripts/02_preprocess_element.py (split/stats), "
             "or check element_forecasting split manifest and time length >= input_len+forecast_len."
         )
 
@@ -144,6 +144,9 @@ def main() -> None:
     ).to(args.device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = nn.MSELoss()
+
+    best_val_mse = float("inf")
+    best_state: dict | None = None
 
     for epoch in range(args.epochs):
         model.train()
@@ -177,7 +180,20 @@ def main() -> None:
                 loss = loss_fn(pred, y)
                 v_total += float(loss.item()) * x.size(0)
                 v_n += x.size(0)
-        _log.info("val mse: %.6f", v_total / max(v_n, 1))
+        vmse = v_total / max(v_n, 1)
+        _log.info("val mse: %.6f", vmse)
+        if vmse < best_val_mse:
+            best_val_mse = vmse
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+    deploy = ROOT / "models" / "forecast_model.pt"
+    deploy.parent.mkdir(parents=True, exist_ok=True)
+    if best_state is not None:
+        torch.save({"model_state_dict": best_state, "best_val_mse": best_val_mse}, deploy)
+        _log.info("deployed best val checkpoint to %s (best val mse=%.6f)", deploy, best_val_mse)
+    else:
+        torch.save({"model_state_dict": model.state_dict()}, deploy)
+        _log.info("deployed last epoch weights to %s (no val improvement tracked)", deploy)
 
 
 if __name__ == "__main__":

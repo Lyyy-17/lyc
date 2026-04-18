@@ -223,12 +223,12 @@ def main() -> None:
     ap.add_argument(
         "--objects-json",
         type=Path,
-        default=ROOT / "outputs/final_results/eddy_detection/test_eddy_objects.json",
+        default=ROOT / "outputs/eddy_detection/test_eddy_objects.json",
     )
     ap.add_argument(
         "--out-dir",
         type=Path,
-        default=ROOT / "outputs/final_results/eddy_detection/tracks",
+        default=ROOT / "outputs/eddy_detection/tracks",
     )
     ap.add_argument("--step-days", type=int, default=8, help="time_index 步长对应天数")
     ap.add_argument("--max-link-dist-px", type=float, default=18.0)

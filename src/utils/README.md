@@ -77,7 +77,7 @@ if __name__ == "__main__":
     main()
 ```
 
-`scripts/02_preprocess.py` 等可执行入口同样在 `parse_args()` 之后调用 `setup_logging()`。
+`scripts/02_preprocess_*.py`、`scripts/sync_data_config.py` 等可执行入口同样在 `parse_args()` 之后调用 `setup_logging()`。
 
 ### 模块内记录信息（推荐写法）
 

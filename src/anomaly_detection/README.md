@@ -6,7 +6,7 @@
 
 ## 风–浪网格不一致：双分支建模（推荐思路）
 
-风、浪原始 NetCDF 的 **经纬度格网不同**（例如风约 241×321、浪约 121×161，见 `data/raw/README.md`）。当前 **数据预处理**（`cleaner` + `02_preprocess.py`）对每年目录分别写出 **`oper_clean.nc`** 与 **`wave_clean.nc`**，**保留各自网格**，**不在预处理阶段把浪插值到风网格**（或反之）。
+风、浪原始 NetCDF 的 **经纬度格网不同**（例如风约 241×321、浪约 121×161，见 `data/raw/README.md`）。当前 **数据预处理**（`cleaner` + `scripts/02_preprocess_anomaly.py`）对每年目录分别写出 **`oper_clean.nc`** 与 **`wave_clean.nc`**，**保留各自网格**，**不在预处理阶段把浪插值到风网格**（或反之）。
 
 若要在**联合建模**时避免「先插值再叠通道」的假设与平滑，可采用 **双分支网络**：
 
@@ -143,7 +143,7 @@ python scripts/05_train_anomaly.py \
 ### 2) 先生成标签/事件模板（一次性）
 
 ```bash
-python scripts/05b_prepare_anomaly_eval_templates.py --force
+python scripts/06_anomaly_assess.py templates --force
 ```
 
 将下面两个模板复制并填充真实标注后再用于评估：

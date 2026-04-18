@@ -123,7 +123,7 @@ class EddySegmentationDataset(Dataset):
 
     def _label_path(self, clean_path: Path) -> Path:
         stem = clean_path.name.replace("_clean.nc", "")
-        return self.labels_dir / f"{stem}_label.nc"
+        return self.labels_dir / f"{stem}_label_meta4_mask_bg0.nc"
 
     def _build_index_manifest(self) -> None:
         for p in self.paths:

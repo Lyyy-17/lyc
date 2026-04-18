@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import warnings
 from pathlib import Path
 from typing import Any
@@ -1188,6 +1189,13 @@ def run_training(args: argparse.Namespace) -> None:
 		str(best_selection_key),
 		best_path,
 	)
+	forecast_deploy = root / "models" / "forecast_model.pt"
+	if best_path.is_file():
+		forecast_deploy.parent.mkdir(parents=True, exist_ok=True)
+		shutil.copy2(best_path, forecast_deploy)
+		_log.info("deployed best checkpoint to %s", forecast_deploy)
+	else:
+		_log.warning("best checkpoint missing, skip copy to %s", forecast_deploy)
 
 
 def main() -> None:

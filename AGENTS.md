@@ -37,7 +37,7 @@
   - 绘图前（或模块首次画图前）调用 `**apply_matplotlib_defaults()**`；
   - 保存图片时用 `**standard_savefig_kwargs()**` 与项目 DPI/背景一致；
   - 仅需个别常量时：`from utils.visualization_defaults import DEFAULT_FIGSIZE, DEFAULT_CMAP, ...`。
-- 图表文件同样落入 `**outputs/` 对应子目录**（如 `outputs/element_forecasting/figures/`），**最终**对外展示可再整理到 `**outputs/final_results/<任务>/`**。
+- 图表文件同样落入 `**outputs/` 对应子目录**（如 `outputs/element_forecasting/figures/`）；定稿汇报材料与中间产物分层约定见下节 `outputs/` 表。
 
 详见 `**src/utils/README.md**` 中可视化小节。
 
@@ -45,7 +45,7 @@
 
 ## 3. `outputs/` 目录约定（中间产物）
 
-`outputs/` 默认 **gitignore**（`**outputs/final_results/`** 例外，见 `.gitignore`）。建议按任务分子目录，便于多人协作与清理：
+`outputs/` 默认 **gitignore**（**各任务下定稿子目录**例外，见 `.gitignore`）。建议按任务分子目录，便于多人协作与清理：
 
 
 | 路径                                      | 用途                                          |
@@ -55,7 +55,7 @@
 | `outputs/element_forecasting/`          | 要素预报主任务（非基线）中间产物                            |
 | `outputs/anomaly_detection/`            | 异常检测任务中间产物                                  |
 | `outputs/baseline/element_forecasting/` | 要素 **基线** 训练中间产物（与主任务分开）                    |
-| `outputs/final_results/<任务>/`           | **最终**对外汇报：最佳指标、定稿图表等（可提交）                  |
+| `outputs/<任务>/` 中定稿子路径           | **最终**对外汇报：最佳指标、定稿图表等（可提交，细则见 `.gitignore`） |
 
 
 `**models/`**：从 `outputs/` 中挑选的**最佳权重**副本，便于版本管理与提交（见根 `README.md`）。
@@ -96,14 +96,14 @@
 
 - 虚拟环境：`python3 -m venv .venv`，`pip install -r requirements.txt`；无 `python` 时用 `**python3`**。
 - 需 `PYTHONPATH=src` 时以脚本或文档为准。
-- 要素基线：`python3 scripts/test_element/run_element_baseline_train.py`。
+- 要素基线（需 `PYTHONPATH=src`）：`python3 -m baseline.element_forecasting.train`（配置见 `configs/baseline/element_forecasting/`）。
 
 ---
 
 ## 7. Git 与协作
 
-- 勿提交：`.venv/`、大体积 `data/`（按 `.gitignore`）、`outputs/` 下除 `final_results/` 规则外的中间文件。
-- 可提交：`configs/`、`outputs/final_results/` 中定稿结果、`models/` 中选定小权重（若体积可接受）。
+- 勿提交：`.venv/`、大体积 `data/`（按 `.gitignore`）、`outputs/` 下除各任务定稿例外规则外的中间文件。
+- 可提交：`configs/`、`outputs/<任务>/` 中按 `.gitignore` 允许的定稿结果、`models/` 中选定小权重（若体积可接受）。
 - 建议使用分支；提交信息标明任务模块与改动类型。
 
 ---
