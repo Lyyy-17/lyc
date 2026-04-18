@@ -7,8 +7,10 @@
     python scripts/07_web_run.py --backend-only
     python scripts/07_web_run.py --frontend-only
     python scripts/07_web_run.py --backend-port 8000 --frontend-port 5173
+    python scripts/07_web_run.py --backend-ready-timeout 120
 
 依赖：后端需已安装 ``src/web/backend/requirements.txt``；前端需在 ``src/web/frontend`` 下执行过 ``npm install``。
+同时启动前后端时，会先起 uvicorn 并轮询 ``/healthz`` 成功后再启动 Vite，避免代理 ECONNREFUSED。
 """
 from __future__ import annotations
 
@@ -20,6 +22,8 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,7 +79,49 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="仅启动 Vite（需自行已启动后端）",
     )
+    p.add_argument(
+        "--backend-ready-timeout",
+        type=float,
+        default=90.0,
+        help="同时起后端+前端时，等待后端 /healthz 可用的最长时间（秒）",
+    )
     return p.parse_args()
+
+
+def _health_check_url(host: str, port: int) -> str:
+    # 监听 0.0.0.0 / :: 时仍对本机用 127.0.0.1 探测
+    h = str(host).strip()
+    if h in ("0.0.0.0", "::", ""):
+        h = "127.0.0.1"
+    return f"http://{h}:{int(port)}/healthz"
+
+
+def _wait_backend_ready(
+    proc: subprocess.Popen | None,
+    host: str,
+    port: int,
+    timeout_s: float,
+    interval_s: float = 0.25,
+) -> bool:
+    url = _health_check_url(host, port)
+    deadline = time.perf_counter() + max(1.0, float(timeout_s))
+    while time.perf_counter() < deadline:
+        if proc is not None and proc.poll() is not None:
+            print(
+                f"[07_web_run] 后端进程已退出（code={proc.poll()}），放弃启动前端。",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        try:
+            with urllib.request.urlopen(url, timeout=2.0) as resp:
+                if getattr(resp, "status", 200) == 200:
+                    return True
+        except (urllib.error.URLError, OSError):
+            pass
+        time.sleep(interval_s)
+    print(f"[07_web_run] 等待后端就绪超时 ({timeout_s}s): {url}", file=sys.stderr, flush=True)
+    return False
 
 
 def main() -> int:
@@ -88,6 +134,8 @@ def main() -> int:
 
     run_backend = not args.frontend_only
     run_frontend = not args.backend_only
+
+    backend_proc: subprocess.Popen | None = None
 
     if run_backend:
         cmd = [
@@ -106,16 +154,23 @@ def main() -> int:
             f"[07_web_run] 后端: {' '.join(cmd)}  (cwd={ROOT})",
             flush=True,
         )
-        _procs.append(
-            (
-                "backend",
-                subprocess.Popen(
-                    cmd,
-                    cwd=str(ROOT),
-                    env={**os.environ},
-                ),
-            )
+        backend_proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            env={**os.environ},
         )
+        _procs.append(("backend", backend_proc))
+
+    if run_frontend and run_backend:
+        if not _wait_backend_ready(
+            backend_proc,
+            args.backend_host,
+            args.backend_port,
+            args.backend_ready_timeout,
+        ):
+            _terminate_all()
+            return 1
+        print("[07_web_run] 后端 /healthz 已可用，启动前端…", flush=True)
 
     if run_frontend:
         npm = shutil.which("npm")
